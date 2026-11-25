@@ -82,7 +82,7 @@ private fun TelemetryProApp(
     var status by remember { mutableStateOf(if (hasSession) "Сессия найдена" else "Войдите в аккаунт Evolute") }
     var smsSent by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf("Главная") }
-    var showAdditional by remember { mutableStateOf(true) }
+    var showAdditional by rememberSaveable { mutableStateOf(true) }
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
