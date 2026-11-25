@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat
 import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
+import com.evolute.telemetrypro.data.RangeEstimator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,7 +54,13 @@ class MainActivity : ComponentActivity() {
                     ApiClient(tokenStore).signIn(phone, code)
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
-                onRefresh = { SnapshotDb.get(this).latest() to SnapshotDb.get(this).count() }
+                onRefresh = {
+                    val db = SnapshotDb.get(this)
+                    val latest = db.latest()
+                    val estimator = RangeEstimator()
+                    db.recentSamples().forEach(estimator::add)
+                    Triple(latest, db.count(), latest?.let { estimator.estimate(it.soc, it.stockRange) })
+                }
             )
         }
     }
@@ -64,7 +71,7 @@ private fun TelemetryProApp(
     hasSession: Boolean,
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
-    onRefresh: suspend () -> Pair<ApiClient.Telemetry?, Long>
+    onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
 ) {
     val scope = rememberCoroutineScope()
     var phone by remember { mutableStateOf("") }
@@ -77,6 +84,7 @@ private fun TelemetryProApp(
     var tab by remember { mutableStateOf("Главная") }
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
+    var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
 
     fun refresh() {
         scope.launch {
@@ -84,6 +92,7 @@ private fun TelemetryProApp(
                 val result = withContext(Dispatchers.IO) { onRefresh() }
                 snapshot = result.first
                 count = result.second
+                estimate = result.third
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Данные обновлены локально"
             } catch (e: Exception) { status = e.message ?: "Ошибка чтения данных" }
         }
@@ -147,7 +156,15 @@ private fun TelemetryProApp(
                 when (tab) {
                     "Главная" -> {
                         MetricCard("Заряд батареи", snapshot?.let { "${it.soc.toInt()}%" } ?: "—", "Последний локальный снимок")
-                        MetricCard("Запас хода", snapshot?.let { "${it.stockRange?.toInt() ?: "—"} км" } ?: "— км", "Штатный прогноз автомобиля; расчёт по истории будет подключён отдельно")
+                        MetricCard(
+                            "Запас хода",
+                            estimate?.let { "${it.rangeKm.toInt()} км" } ?: "— км",
+                            when (estimate?.source) {
+                                RangeEstimator.Source.MEASURED_10_KM -> "Расчёт по фактическому расходу SOC за последние 10 км"
+                                RangeEstimator.Source.OEM_FALLBACK -> "Штатный прогноз автомобиля • недостаточно истории"
+                                else -> "Ожидание данных"
+                            }
+                        )
                         MetricCard("Одометр", snapshot?.let { "${"%.1f".format(it.odometer)} км" } ?: "—", "Штатный показатель автомобиля")
                         MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
                     }
