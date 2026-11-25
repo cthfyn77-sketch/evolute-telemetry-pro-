@@ -2,10 +2,7 @@ package com.evolute.telemetrypro.data
 
 import kotlin.math.abs
 
-/**
- * Estimates range from real SOC consumption across the latest 10 km.
- * Inputs are raw telemetry samples. Charging and implausible jumps are excluded.
- */
+/** Uses a continuous, non-charging telemetry segment and the most recent ~10 km. */
 class RangeEstimator {
     data class Sample(val odometerKm: Double, val socPercent: Double, val capturedAtMillis: Long, val charging: Boolean = false)
     data class Estimate(val rangeKm: Double, val socPer100Km: Double, val distanceWindowKm: Double, val source: Source)
@@ -31,10 +28,12 @@ class RangeEstimator {
     @Synchronized
     fun estimate(remainingSocPercent: Double, oemRangeKm: Double?): Estimate? {
         if (remainingSocPercent !in 0.0..100.0) return null
-        val usable = samples.filterNot { it.charging }
-        val latest = usable.lastOrNull()
+        // Charging is a hard boundary: never calculate consumption across a charge session.
+        val lastChargeIndex = samples.indexOfLast { it.charging }
+        val segment = samples.drop(lastChargeIndex + 1).filterNot { it.charging }
+        val latest = segment.lastOrNull()
         if (latest != null) {
-            val start = usable.lastOrNull { it.odometerKm <= latest.odometerKm - 10.0 + 1e-6 }
+            val start = segment.lastOrNull { it.odometerKm <= latest.odometerKm - 10.0 + 1e-6 }
             if (start != null) {
                 val distance = latest.odometerKm - start.odometerKm
                 val consumed = start.socPercent - latest.socPercent
