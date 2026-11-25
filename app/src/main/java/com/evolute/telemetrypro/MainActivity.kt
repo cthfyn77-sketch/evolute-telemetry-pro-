@@ -41,9 +41,13 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        val existingSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
+        if (existingSession) {
+            runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
+        }
         setContent {
             TelemetryProApp(
-                hasSession = runCatching { tokenStore.get() != null }.getOrDefault(false),
+                hasSession = existingSession,
                 onRequestCode = { phone, country -> ApiClient(tokenStore).requestOtp(phone, country) },
                 onLogin = { phone, code ->
                     ApiClient(tokenStore).signIn(phone, code)
