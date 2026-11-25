@@ -30,8 +30,10 @@ class KeystoreTokenStore(context: Context) : TokenStore {
     }
 
     @Synchronized override fun get(): ApiClient.Tokens? {
-        val iv = prefs.getString("iv", null) ?: return null
-        val data = prefs.getString("data", null) ?: throw IOException("Хранилище сессии повреждено")
+        val iv = prefs.getString("iv", null)
+        val data = prefs.getString("data", null)
+        if (iv == null && data == null) return null
+        if (iv.isNullOrBlank() || data.isNullOrBlank()) throw IOException("Хранилище сессии повреждено")
         return try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key(false), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
