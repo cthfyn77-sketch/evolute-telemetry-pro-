@@ -17,7 +17,7 @@ class RangeEstimatorTest {
         estimator.add(RangeEstimator.Sample(110.0, 70.0, 3_000))
         val result = estimator.estimate(70.0, 200.0)!!
         assertEquals(RangeEstimator.Source.MEASURED_10_KM, result.source)
-        assertEquals(138.0, result.rangeKm, 0.001)
+        assertEquals(140.0, result.rangeKm, 0.001)
         assertEquals(50.0, result.socPer100Km, 0.001)
     }
 
@@ -28,7 +28,7 @@ class RangeEstimatorTest {
         estimator.add(RangeEstimator.Sample(111.4, 69.0, 3_000))
         val result = estimator.estimate(69.0, 180.0)!!
         assertEquals(RangeEstimator.Source.MEASURED_10_KM, result.source)
-        assertEquals(140.0, result.rangeKm, 0.001)
+        assertEquals(138.0, result.rangeKm, 0.001)
         assertEquals(10.0, result.distanceWindowKm, 0.001)
     }
 
