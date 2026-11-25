@@ -67,7 +67,7 @@ class ApiClient(private val tokens: TokenStore) {
         if (request("/id-service/info", auth = false).optBoolean("capcha", false))
             throw IOException("API требует CAPTCHA; автоматический обход не выполняется")
         request("/id-service/auth/sign-up", "POST",
-            JSONObject().put("phone", phone).put("phoneCountry", country.uppercase()).put("capchaToken", ""), false)
+            JSONObject().put("phone", phone).put("phoneCountry", country.lowercase()).put("capchaToken", ""), false)
     }
 
     fun signIn(phone: String, code: String) {
