@@ -34,11 +34,13 @@ class CollectorService : Service() {
             while (isActive) {
                 try {
                     val data = api.fetchTelemetry()
-                    val charging = data.sensors["isChargingGunInserted"]?.equals("true", true) == true
+                    val charging = data.sensors["isChargingGunInserted"]?.let {
+                        it.equals("true", true) || it == "1"
+                    } == true
                     db.insert(data, charging)
                     estimator.add(RangeEstimator.Sample(data.odometer, data.soc, System.currentTimeMillis(), charging))
-                    val estimate = estimator.estimate(data.soc, data.stockRange)
-                    val rangeText = estimate?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
+                    val range = estimator.estimate(data.soc, data.stockRange)
+                    val rangeText = range?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
                     updateNotification("SOC ${data.soc.toInt()}% • опрос каждые 30 с$rangeText")
                 } catch (e: Exception) {
                     updateNotification("Нет свежих данных • ${e.message?.take(70) ?: "ошибка API"}")
@@ -55,17 +57,18 @@ class CollectorService : Service() {
                 .createNotificationChannel(NotificationChannel(CHANNEL, "Сбор телеметрии", NotificationManager.IMPORTANCE_LOW))
         }
     }
-    private fun notification(text: String): Notification =
-        if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
-            .setContentTitle("Evolute Telemetry Pro").setContentText(text)
+
+    @Suppress("DEPRECATION")
+    private fun notification(text: String): Notification {
+        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else Notification.Builder(this)
+        return builder.setContentTitle("Evolute Telemetry Pro").setContentText(text)
             .setSmallIcon(android.R.drawable.stat_notify_sync).setOngoing(true).build()
-        else @Suppress("DEPRECATION") Notification.Builder(this)
-            .setContentTitle("Evolute Telemetry Pro").setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_notify_sync).setOngoing(true).build()
+    }
 
     private fun updateNotification(text: String) {
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
     }
+
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
 
     companion object { private const val CHANNEL = "evolute_telemetry_pro"; private const val NOTIFICATION_ID = 821 }
