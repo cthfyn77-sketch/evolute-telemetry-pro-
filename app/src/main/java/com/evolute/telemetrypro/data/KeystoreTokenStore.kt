@@ -37,8 +37,8 @@ class KeystoreTokenStore(context: Context) : TokenStore {
             cipher.init(Cipher.DECRYPT_MODE, key(false), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
             val json = JSONObject(String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), Charsets.UTF_8))
             ApiClient.Tokens(json.getString("access"), json.getString("refresh"),
-                json.optString("userId").ifBlank { null }, json.optString("userToken").ifBlank { null },
-                json.optString("widgetId").ifBlank { null })
+                json.optString("userId").takeIf { it.isNotBlank() }, json.optString("userToken").takeIf { it.isNotBlank() },
+                json.optString("widgetId").takeIf { it.isNotBlank() })
         } catch (e: Exception) { throw IOException("Не удалось прочитать защищённую сессию", e) }
     }
 
