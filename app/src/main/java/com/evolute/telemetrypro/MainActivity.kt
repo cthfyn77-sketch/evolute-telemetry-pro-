@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -178,7 +179,7 @@ private fun TelemetryProApp(
                     "Поездки" -> MetricCard("История поездок", "Подключается", "Следующий этап — чтение поездок и маршрутов API")
                     "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
                     else -> MetricCard("Технические датчики",
-                        snapshot?.sensors?.entries?.joinToString("\n") { "${it.key}: ${it.value}" } ?: "Нет данных",
+                        snapshot?.sensors?.entries?.joinToString("\\n") { "${it.key}: ${it.value}" } ?: "Нет данных",
                         "Показываются только значения, реально полученные от API")
                 }
                 TextButton(onClick = { refresh() }) { Text("Обновить данные") }
