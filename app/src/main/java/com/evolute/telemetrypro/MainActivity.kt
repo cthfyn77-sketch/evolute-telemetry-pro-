@@ -82,6 +82,7 @@ private fun TelemetryProApp(
     var status by remember { mutableStateOf(if (hasSession) "Сессия найдена" else "Войдите в аккаунт Evolute") }
     var smsSent by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf("Главная") }
+    var showAdditional by remember { mutableStateOf(true) }
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
@@ -166,7 +167,12 @@ private fun TelemetryProApp(
                             }
                         )
                         MetricCard("Одометр", snapshot?.let { "${"%.1f".format(it.odometer)} км" } ?: "—", "Штатный показатель автомобиля")
-                        MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
+                        TextButton(onClick = { showAdditional = !showAdditional }) {
+                            Text(if (showAdditional) "Скрыть дополнительные показания" else "Показать дополнительные показания")
+                        }
+                        if (showAdditional) {
+                            MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
+                        }
                     }
                     "Батарея" -> MetricCard("Батарея", snapshot?.let { "SOC ${it.soc}%" } ?: "Нет данных", "Снимков сохранено: $count • графики в следующем этапе")
                     "Поездки" -> MetricCard("История поездок", "Подключается", "Следующий этап — чтение поездок и маршрутов API")
