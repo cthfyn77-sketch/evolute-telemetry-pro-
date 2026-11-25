@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -82,6 +83,8 @@ private fun TelemetryProApp(
     var status by remember { mutableStateOf(if (hasSession) "Сессия найдена" else "Войдите в аккаунт Evolute") }
     var smsSent by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf("Главная") }
+    var showAdditional by rememberSaveable { mutableStateOf(true) }
+    var showTechnicalSensors by rememberSaveable { mutableStateOf(true) }
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
@@ -166,14 +169,26 @@ private fun TelemetryProApp(
                             }
                         )
                         MetricCard("Одометр", snapshot?.let { "${"%.1f".format(it.odometer)} км" } ?: "—", "Штатный показатель автомобиля")
-                        MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
+                        TextButton(onClick = { showAdditional = !showAdditional }) {
+                            Text(if (showAdditional) "Скрыть дополнительные показания" else "Показать дополнительные показания")
+                        }
+                        if (showAdditional) {
+                            MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
+                        }
                     }
                     "Батарея" -> MetricCard("Батарея", snapshot?.let { "SOC ${it.soc}%" } ?: "Нет данных", "Снимков сохранено: $count • графики в следующем этапе")
                     "Поездки" -> MetricCard("История поездок", "Подключается", "Следующий этап — чтение поездок и маршрутов API")
                     "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
-                    else -> MetricCard("Технические датчики",
-                        snapshot?.sensors?.entries?.joinToString("\n") { "${it.key}: ${it.value}" } ?: "Нет данных",
-                        "Показываются только значения, реально полученные от API")
+                    else -> {
+                        TextButton(onClick = { showTechnicalSensors = !showTechnicalSensors }) {
+                            Text(if (showTechnicalSensors) "Скрыть технические датчики" else "Показать технические датчики")
+                        }
+                        if (showTechnicalSensors) {
+                            MetricCard("Технические датчики",
+                                snapshot?.sensors?.entries?.joinToString("\\n") { "${it.key}: ${it.value}" } ?: "Нет данных",
+                                "Показываются только значения, реально полученные от API")
+                        }
+                    }
                 }
                 TextButton(onClick = { refresh() }) { Text("Обновить данные") }
                 Text("Снимков в локальной базе: $count", color = Muted)
