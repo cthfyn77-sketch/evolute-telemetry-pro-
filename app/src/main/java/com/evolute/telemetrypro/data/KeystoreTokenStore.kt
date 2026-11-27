@@ -29,7 +29,7 @@ class KeystoreTokenStore(context: Context) : TokenStore {
         return generator.generateKey()
     }
 
-    @Synchronized override fun get(): ApiClient.Tokens? {
+    @Synchronized override fun get(): EvaconnectMcpClient.Tokens? {
         val iv = prefs.getString("iv", null)
         val data = prefs.getString("data", null)
         if (iv == null && data == null) return null
@@ -38,15 +38,15 @@ class KeystoreTokenStore(context: Context) : TokenStore {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key(false), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
             val json = JSONObject(String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), Charsets.UTF_8))
-            ApiClient.Tokens(json.getString("access"), json.getString("refresh"),
+            EvaconnectMcpClient.Tokens(json.getString("access"), json.getString("refresh"),
                 json.optString("userId").takeIf { it.isNotBlank() }, json.optString("userToken").takeIf { it.isNotBlank() },
-                json.optString("widgetId").takeIf { it.isNotBlank() })
+                json.optString("widgetId").takeIf { it.isNotBlank() },\n                json.optString("carId").takeIf { it.isNotBlank() })
         } catch (e: Exception) { throw IOException("Не удалось прочитать защищённую сессию", e) }
     }
 
-    @Synchronized override fun save(tokens: ApiClient.Tokens) {
+    @Synchronized override fun save(tokens: EvaconnectMcpClient.Tokens) {
         val json = JSONObject().put("access", tokens.access).put("refresh", tokens.refresh)
-            .put("userId", tokens.userId).put("userToken", tokens.userToken).put("widgetId", tokens.widgetId)
+            .put("userId", tokens.userId).put("userToken", tokens.userToken).put("widgetId", tokens.widgetId)\n            .put("carId", tokens.carId)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key(true))
         val data = Base64.encodeToString(cipher.doFinal(json.toString().toByteArray()), Base64.NO_WRAP)
