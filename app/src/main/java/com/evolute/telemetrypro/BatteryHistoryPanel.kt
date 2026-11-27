@@ -54,7 +54,7 @@ internal fun BatteryHistoryPanel(
                     Text("Сейчас: ${"%.2f".format(metric.latest)}", color = Color.White, fontSize = 21.sp)
                     Text("Мин. ${"%.2f".format(metric.min)}  •  Макс. ${"%.2f".format(metric.max)}  •  ${metric.samples} замеров",
                         color = BatteryMuted, fontSize = 11.sp)
-                    BatteryMetricGraph(metric.points)
+                    BatteryMetricGraph(metric.points, fixedVoltageScale = metric.path.equals("12VBatteryVoltage", ignoreCase = true))
                     if (BatteryHistoryAnalyzer.hasTelemetryGap(metric.points)) {
                         Text("Есть пропуски телеметрии — линии на графике не соединяются через разрыв",
                             color = BatteryMuted, fontSize = 10.sp)
@@ -78,27 +78,59 @@ internal fun BatteryHistoryPanel(
 }
 
 @Composable
-private fun BatteryMetricGraph(points: List<BatteryHistoryAnalyzer.Point>) {
-    Canvas(Modifier.fillMaxWidth().height(116.dp).background(Color(0xFF14212A), RoundedCornerShape(10.dp))) {
-        if (points.isEmpty()) return@Canvas
-        val minValue = points.minOf { it.value }
-        val maxValue = points.maxOf { it.value }
-        val span = (maxValue - minValue).coerceAtLeast(0.001)
-        val first = points.first().at.toEpochMilli().toDouble()
-        val timeSpan = (points.last().at.toEpochMilli().toDouble() - first).coerceAtLeast(1.0)
-        val left = 8.dp.toPx()
-        val right = size.width - 8.dp.toPx()
-        val top = 8.dp.toPx()
-        val bottom = size.height - 8.dp.toPx()
-        val path = Path()
-        points.forEachIndexed { index, point ->
-            val x = left + ((point.at.toEpochMilli() - first) / timeSpan).toFloat() * (right - left)
-            val y = bottom - ((point.value - minValue) / span).toFloat() * (bottom - top)
-            val gap = index > 0 && Duration.between(points[index - 1].at, point.at).seconds > 600
-            if (index == 0 || gap) path.moveTo(x, y) else path.lineTo(x, y)
+private fun BatteryMetricGraph(
+    points: List<BatteryHistoryAnalyzer.Point>,
+    fixedVoltageScale: Boolean
+) {
+    val chartHeight = 144.dp
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (fixedVoltageScale) {
+            Column(
+                modifier = Modifier.height(chartHeight).width(28.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                (17 downTo 9).forEach { tick ->
+                    Text("$tick", color = BatteryMuted, fontSize = 9.sp, maxLines = 1)
+                }
+            }
         }
-        drawPath(path, BatteryAccent, style = androidx.compose.ui.graphics.drawscope.Stroke(
-            width = 2.dp.toPx(), cap = StrokeCap.Round
-        ))
+        Canvas(
+            Modifier.weight(1f).height(chartHeight)
+                .background(Color(0xFF14212A), RoundedCornerShape(10.dp))
+        ) {
+            if (points.isEmpty()) return@Canvas
+            val minValue = if (fixedVoltageScale) 9.0 else points.minOf { it.value }
+            val maxValue = if (fixedVoltageScale) 17.0 else points.maxOf { it.value }
+            val span = (maxValue - minValue).coerceAtLeast(0.001)
+            val first = points.first().at.toEpochMilli().toDouble()
+            val timeSpan = (points.last().at.toEpochMilli().toDouble() - first).coerceAtLeast(1.0)
+            val left = 8.dp.toPx()
+            val right = size.width - 8.dp.toPx()
+            val top = 8.dp.toPx()
+            val bottom = size.height - 8.dp.toPx()
+
+            if (fixedVoltageScale) {
+                for (tick in 9..17) {
+                    val y = bottom - ((tick - minValue) / span).toFloat() * (bottom - top)
+                    drawLine(
+                        color = BatteryMuted.copy(alpha = 0.18f),
+                        start = androidx.compose.ui.geometry.Offset(left, y),
+                        end = androidx.compose.ui.geometry.Offset(right, y),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+            }
+
+            val path = Path()
+            points.forEachIndexed { index, point ->
+                val x = left + ((point.at.toEpochMilli() - first) / timeSpan).toFloat() * (right - left)
+                val y = bottom - ((point.value - minValue) / span).toFloat() * (bottom - top)
+                val gap = index > 0 && Duration.between(points[index - 1].at, point.at).seconds > 600
+                if (index == 0 || gap) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, BatteryAccent, style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = 2.dp.toPx(), cap = StrokeCap.Round
+            ))
+        }
     }
 }
