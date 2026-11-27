@@ -94,8 +94,9 @@ class TripHistoryAnalyzerTest {
             sample(300_000, 20.0), sample(330_000, 20.3)
         ))
         assertEquals(2, report.trips.size)
-        assertEquals(60_000L, report.trips[0].observedDurationMs)
-        assertEquals(30_000L, report.trips[1].observedDurationMs)
+        // Trips are displayed newest first.
+        assertEquals(30_000L, report.trips[0].observedDurationMs)
+        assertEquals(60_000L, report.trips[1].observedDurationMs)
         assertEquals(90_000L, report.totalObservedDurationMs)
         assertEquals(45_000L, report.averageObservedDurationMs)
         assertEquals(60_000L, report.longestObservedDurationMs)
