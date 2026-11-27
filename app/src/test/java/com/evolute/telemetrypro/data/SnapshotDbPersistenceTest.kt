@@ -38,6 +38,7 @@ class SnapshotDbPersistenceTest {
     @Test
     fun tripHistorySamplesPreserveChronologyAndOfflineBreakMarkers() {
         val context = RuntimeEnvironment.getApplication()
+        SnapshotDb.resetForTests()
         context.deleteDatabase("evolute_telemetry_pro.sqlite")
         val db = SnapshotDb.get(context)
         try {
@@ -55,7 +56,7 @@ class SnapshotDbPersistenceTest {
             assertEquals(10.2, points[2].odometerKm, 0.001)
             assertTrue(points.zipWithNext().all { (a, b) -> b.capturedAtMs > a.capturedAtMs })
         } finally {
-            db.close()
+            SnapshotDb.resetForTests()
             context.deleteDatabase("evolute_telemetry_pro.sqlite")
         }
     }
