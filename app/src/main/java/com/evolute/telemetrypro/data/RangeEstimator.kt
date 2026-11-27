@@ -36,7 +36,11 @@ class RangeEstimator {
         if (last != null) {
             if (sample.capturedAtMillis <= last.capturedAtMillis) return
             if (sample.odometerKm < last.odometerKm) return
-            if (sample.odometerKm - last.odometerKm > MAX_SAMPLE_DISTANCE_KM) return
+            val elapsed = sample.capturedAtMillis - last.capturedAtMillis
+            val distance = sample.odometerKm - last.odometerKm
+            // A large distance jump is accepted only after a telemetry outage;
+            // estimate() will restart the unfinished interval at this sample.
+            if (distance > MAX_SAMPLE_DISTANCE_KM && elapsed <= TELEMETRY_GAP_MILLIS) return
             if (abs(sample.socPercent - last.socPercent) > MAX_SOC_CHANGE_PERCENT) return
         }
 
