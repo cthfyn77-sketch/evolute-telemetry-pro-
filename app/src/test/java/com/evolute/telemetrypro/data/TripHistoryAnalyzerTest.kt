@@ -75,6 +75,19 @@ class TripHistoryAnalyzerTest {
         assertEquals(0.2, report.trips.single().distanceKm, 0.0001)
     }
 
+    @Test fun reportSummarizesOnlyConfirmedTrips() {
+        val report = TripHistoryAnalyzer.analyze(listOf(
+            sample(1_000, 1.0, 90.0), sample(31_000, 1.2, 89.0),
+            sample(61_000, 1.5, 88.0),
+            sample(300_000, 5.0, 80.0), sample(330_000, 5.3, 77.0)
+        ))
+        assertEquals(2, report.trips.size)
+        assertEquals(0.8, report.totalDistanceKm, 0.0001)
+        assertEquals(5.0, report.totalSocUsedPercent, 0.0001)
+        assertEquals(0.4, report.averageDistanceKm, 0.0001)
+        assertEquals(0.5, report.longestTripKm, 0.0001)
+    }
+
     @Test fun emptyHistoryDoesNotInventTrips() {
         val report = TripHistoryAnalyzer.analyze(emptyList())
         assertTrue(report.trips.isEmpty())

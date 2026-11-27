@@ -31,6 +31,12 @@ object TripHistoryAnalyzer {
         val ignoredOdometerJumps: Int,
         val sampleCount: Int
     ) {
+        val totalDistanceKm: Double get() = trips.sumOf { it.distanceKm }
+        val totalSocUsedPercent: Double get() = trips.sumOf { it.socUsedPercent }
+        val averageDistanceKm: Double get() =
+            if (trips.isEmpty()) 0.0 else totalDistanceKm / trips.size
+        val longestTripKm: Double get() = trips.maxOfOrNull { it.distanceKm } ?: 0.0
+
         companion object {
             fun empty() = Report(emptyList(), 0, 0, 0)
         }

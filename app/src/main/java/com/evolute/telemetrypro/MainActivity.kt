@@ -305,6 +305,13 @@ private fun TelemetryProApp(
                         if (report != null && report.trips.isEmpty()) {
                             MetricCard("Пока нет подтверждённых поездок", "—", "Нужны последовательные онлайн-снимки с увеличением одометра")
                         }
+                        if (report != null && report.trips.isNotEmpty()) {
+                            MetricCard(
+                                "Сводка по подтверждённым поездкам",
+                                "${"%.1f".format(report.totalDistanceKm)} км",
+                                "${report.trips.size} поездок • в среднем ${"%.1f".format(report.averageDistanceKm)} км • максимум ${"%.1f".format(report.longestTripKm)} км • снижение SOC суммарно ${"%.1f".format(report.totalSocUsedPercent)} п.п."
+                            )
+                        }
                         report?.trips?.forEachIndexed { index, trip ->
                             val start = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
                                 .format(java.util.Date(trip.startedAtMs))
