@@ -562,7 +562,7 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
             val raw = trip.opt(key)
             val value = when (key) {
                 "odometer", "battery", "fuel" -> firstLast(raw)
-                "id", "distance", "batteryConsumption" -> raw.toString().toLongOrNull() ?: raw
+                "id", "distance", "batteryConsumption" -> raw?.toString()?.toLongOrNull() ?: raw
                 else -> raw
             }
             result.put(outputKey, value.jsonOrNull())
