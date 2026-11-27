@@ -61,6 +61,18 @@ class TripBatteryComparisonAnalyzerTest {
         assertNull(comparison.auxiliaryVoltageEnd)
     }
 
+    @Test fun keepsMissingAuxiliaryVoltageAsGapInTripTimeline() {
+        val report = TripBatteryComparisonAnalyzer.analyze(listOf(trip()), listOf(
+            sample(1_000, 80.0, voltage = "12.7"),
+            sample(31_000, 79.0, voltage = "null"),
+            sample(61_000, 78.0, voltage = "12.4")
+        ))
+        val points = report.comparisons.single().points
+        assertEquals(12.7, points[0].auxiliaryVoltageV!!, 0.0001)
+        assertNull(points[1].auxiliaryVoltageV)
+        assertEquals(12.4, points[2].auxiliaryVoltageV!!, 0.0001)
+    }
+
     @Test fun requiresAtLeastTwoValidSnapshotsWithinTrip() {
         val report = TripBatteryComparisonAnalyzer.analyze(listOf(trip()), listOf(
             sample(1_000, 80.0), sample(90_000, 78.0)

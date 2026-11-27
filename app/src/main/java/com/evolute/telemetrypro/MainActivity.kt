@@ -422,6 +422,17 @@ private fun TelemetryProApp(
                                         "${"%.2f".format(voltageStart)} → ${"%.2f".format(voltageEnd)} В",
                                         "Отдельный вспомогательный аккумулятор; промежуточные значения сохраняются в снимках")
                                 }
+                                val measuredVoltages = batteryComparison.points.map { it.auxiliaryVoltageV }
+                                if (measuredVoltages.any { it != null }) {
+                                    BatteryTrendChart(
+                                        title = "Напряжение вспомогательной батареи 12 В",
+                                        values = measuredVoltages,
+                                        unit = "В"
+                                    )
+                                } else {
+                                    MetricCard("Напряжение батареи 12 В", "Нет измерений",
+                                        "Датчик не передал значения в этой поездке")
+                                }
                                 val firstTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
                                     .format(java.util.Date(batteryComparison.points.first().capturedAtMs))
                                 val lastTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
@@ -435,7 +446,7 @@ private fun TelemetryProApp(
                             }
                         }
                         if (report != null) {
-                            Text("Показываются только измеренные SOC, температура батареи и отдельное напряжение 12-вольтовой батареи. Это не оценка ёмкости или энергии в кВт·ч.", color = Muted, fontSize = 11.sp)
+                            Text("Показываются только измеренные SOC, температура тяговой батареи и отдельное напряжение вспомогательной батареи 12 В. Пропуски датчика остаются разрывами графика; значения не интерполируются. Это не оценка ёмкости или энергии в кВт·ч.", color = Muted, fontSize = 11.sp)
                             Text("Расстояние через разрывы телеметрии и скачки одометра не засчитывается. Маршрут и адреса не отображаются: подтверждённого API маршрутов пока нет.", color = Muted, fontSize = 11.sp)
                         }
                     }
