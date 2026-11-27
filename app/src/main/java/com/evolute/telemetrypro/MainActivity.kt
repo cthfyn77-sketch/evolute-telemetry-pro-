@@ -142,7 +142,8 @@ private fun TelemetryProApp(
 ) {
     val scope = rememberCoroutineScope()
     var phone by rememberSaveable { mutableStateOf("") }
-    var country by rememberSaveable { mutableStateOf("") }
+    // The verified Collector login form defaults to the account country RU.
+    var country by rememberSaveable { mutableStateOf("RU") }
     var smsCode by rememberSaveable { mutableStateOf("") }
     var session by remember { mutableStateOf(hasSession) }
     var busy by remember { mutableStateOf(false) }
@@ -277,7 +278,7 @@ private fun TelemetryProApp(
                         Text("Вход выполняется прямо на телефоне. Токены сохраняются в зашифрованном Android Keystore.", color = Muted, fontSize = 12.sp)
                         OutlinedTextField(
                             phone, { phone = it.filter(Char::isDigit).take(15) },
-                            label = { Text("Телефон с кодом страны") },
+                            label = { Text("Телефон с кодом страны, без +") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
