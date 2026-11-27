@@ -24,6 +24,7 @@ import androidx.core.content.ContextCompat
 import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.ChargingSessionAnalyzer
+import com.evolute.telemetrypro.data.DrivingEfficiencyAnalyzer
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
@@ -89,6 +90,9 @@ class MainActivity : ComponentActivity() {
                 onChargingHistory = {
                     ChargingSessionAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
                 },
+                onDrivingEfficiency = {
+                    DrivingEfficiencyAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
+                },
                 onBatteryHistory = { periodMs ->
                     val db = SnapshotDb.get(this)
                     val cutoff = periodMs?.let { System.currentTimeMillis() - it }
@@ -118,6 +122,7 @@ private fun TelemetryProApp(
     onRefresh: suspend () -> RefreshState,
     onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
     onChargingHistory: suspend () -> ChargingSessionAnalyzer.Report,
+    onDrivingEfficiency: suspend () -> DrivingEfficiencyAnalyzer.Report,
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
@@ -143,6 +148,8 @@ private fun TelemetryProApp(
     var tripReport by remember { mutableStateOf<TripHistoryAnalyzer.Report?>(null) }
     var chargingReport by remember { mutableStateOf<ChargingSessionAnalyzer.Report?>(null) }
     var chargingLoading by remember { mutableStateOf(false) }
+    var efficiencyReport by remember { mutableStateOf<DrivingEfficiencyAnalyzer.Report?>(null) }
+    var efficiencyLoading by remember { mutableStateOf(false) }
     var tripLoading by remember { mutableStateOf(false) }
     var batteryLoading by remember { mutableStateOf(false) }
     var refreshInFlight by remember { mutableStateOf(false) }
@@ -208,6 +215,19 @@ private fun TelemetryProApp(
                 status = e.message ?: "Не удалось прочитать историю подключений"
             } finally {
                 chargingLoading = false
+            }
+        }
+    }
+
+    LaunchedEffect(session, tab, count) {
+        if (session && tab == "Аналитика") {
+            efficiencyLoading = true
+            try {
+                efficiencyReport = withContext(Dispatchers.IO) { onDrivingEfficiency() }
+            } catch (e: Exception) {
+                status = e.message ?: "Не удалось рассчитать расход SOC"
+            } finally {
+                efficiencyLoading = false
             }
         }
     }
@@ -391,7 +411,19 @@ private fun TelemetryProApp(
                             }
                         }
                     }
-                    "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
+                    "Аналитика" -> {
+                        val report = efficiencyReport
+                        MetricCard("Расход заряда", when {
+                            efficiencyLoading -> "Расчёт…"
+                            report?.socPer100Km != null -> "${"%.1f".format(report.socPer100Km)} п.п. / 100 км"
+                            else -> "Недостаточно данных"
+                        }, "Средний чистый расход SOC по подтверждённым участкам движения; прирост SOC при рекуперации учитывается")
+                        if (report != null) {
+                            MetricCard("Пробег в расчёте", "${"%.1f".format(report.distanceKm)} км", "${report.intervalCount} валидных интервалов • исключено: ${report.excludedIntervalCount}")
+                            MetricCard("Пробег на 1% SOC", report.kmPerSocPercent?.let { "${"%.2f".format(it)} км" } ?: "Недостаточно данных", "Оценка по накопленным наблюдениям, не прогноз запаса хода")
+                        }
+                        Text("Из расчёта исключаются зарядка, офлайн-снимки, разрывы телеметрии, скачки одометра и резкие изменения SOC. Показатель SOC не равен энергии в кВт·ч.", color = Muted, fontSize = 11.sp)
+                    }
                     else -> {
                         TextButton(onClick = { showTechnicalSensors = !showTechnicalSensors }) {
                             Text(if (showTechnicalSensors) "Скрыть технические датчики" else "Показать технические датчики")
