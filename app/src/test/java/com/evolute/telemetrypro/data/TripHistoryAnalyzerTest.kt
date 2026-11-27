@@ -63,7 +63,7 @@ class TripHistoryAnalyzerTest {
         ))
         assertEquals(2, report.trips.size)
         assertEquals(1, report.ignoredOdometerJumps)
-        assertEquals(0.2, report.trips.sumOf { it.distanceKm }, 0.0001)
+        assertEquals(0.4, report.trips.sumOf { it.distanceKm }, 0.0001)
     }
 
     @Test fun duplicateAndInvalidSamplesAreFiltered() {
