@@ -385,6 +385,17 @@ private fun TelemetryProApp(
                                 "${report.trips.size} поездок • в среднем ${"%.1f".format(report.averageDistanceKm)} км • максимум ${"%.1f".format(report.longestTripKm)} км • наблюдаемый интервал суммарно ${formatObservedDuration(report.totalObservedDurationMs)}, в среднем ${formatObservedDuration(report.averageObservedDurationMs)} • снижение SOC суммарно ${"%.1f".format(report.totalSocUsedPercent)} п.п."
                             )
                         }
+                        if (report != null && report.dailySummaries.isNotEmpty()) {
+                            Text("Сводка по дням", color = Cyan, fontSize = 16.sp)
+                            report.dailySummaries.take(7).forEach { day ->
+                                val dayLabel = day.date.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy", java.util.Locale.getDefault()))
+                                MetricCard(
+                                    "Поездки • $dayLabel",
+                                    "${day.tripCount} поездок • ${"%.1f".format(day.totalDistanceKm)} км",
+                                    "Группировка по дате начала поездки • наблюдаемый интервал: ${formatObservedDuration(day.totalObservedDurationMs)} • снижение SOC: ${"%.1f".format(day.totalSocUsedPercent)} п.п."
+                                )
+                            }
+                        }
                         report?.trips?.forEachIndexed { index, trip ->
                             val start = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
                                 .format(java.util.Date(trip.startedAtMs))

@@ -28,13 +28,22 @@ object TripHistoryAnalyzer {
         val observedDurationMs: Long get() = (endedAtMs - startedAtMs).coerceAtLeast(0L)
     }
 
+    data class DailySummary(
+        val date: java.time.LocalDate,
+        val tripCount: Int,
+        val totalDistanceKm: Double,
+        val totalObservedDurationMs: Long,
+        val totalSocUsedPercent: Double
+    )
+
     data class Report(
         val trips: List<Trip>,
         val excludedGaps: Int,
         val ignoredOdometerJumps: Int,
         val sampleCount: Int,
         val distanceTodayKm: Double,
-        val distanceSinceLastChargeKm: Double?
+        val distanceSinceLastChargeKm: Double?,
+        val dailySummaries: List<DailySummary> = emptyList()
     ) {
         val totalDistanceKm: Double get() = trips.sumOf { it.distanceKm }
         val totalSocUsedPercent: Double get() = trips.sumOf { it.socUsedPercent }
@@ -51,7 +60,7 @@ object TripHistoryAnalyzer {
         }
     }
 
-    fun analyze(input: List<TripHistorySample>, nowMs: Long = System.currentTimeMillis(), zoneId: java.time.ZoneId = java.time.ZoneId.systemDefault()): Report {
+    fun analyze(input: List<TripHistorySample>, nowMs: Long = System.currentTimeMillis(), zoneId: java.time.ZoneId = java.time.ZoneId.of("Europe/Moscow")): Report {
         val samples = input.asSequence()
             .filter { it.capturedAtMs > 0 && it.odometerKm.isFinite() && it.odometerKm >= 0.0 &&
                 it.socPercent.isFinite() && it.socPercent in 0.0..100.0 }
@@ -128,6 +137,21 @@ object TripHistoryAnalyzer {
         val sinceLastCharge = lastChargeAtMs?.let { chargeAt ->
             orderedTrips.filter { it.startedAtMs >= chargeAt }.sumOf { it.distanceKm }
         }
-        return Report(orderedTrips, excludedGaps, ignoredJumps, samples.size, distanceToday, sinceLastCharge)
+        // Attribute each complete reconstructed trip to its local start date.
+        // This avoids splitting or shifting a trip's totals across calendar days.
+        val dailySummaries = orderedTrips
+            .groupBy { java.time.Instant.ofEpochMilli(it.startedAtMs).atZone(zoneId).toLocalDate() }
+            .entries
+            .sortedByDescending { it.key }
+            .map { (date, dayTrips) ->
+                DailySummary(
+                    date = date,
+                    tripCount = dayTrips.size,
+                    totalDistanceKm = dayTrips.sumOf { it.distanceKm },
+                    totalObservedDurationMs = dayTrips.sumOf { it.observedDurationMs },
+                    totalSocUsedPercent = dayTrips.sumOf { it.socUsedPercent }
+                )
+            }
+        return Report(orderedTrips, excludedGaps, ignoredJumps, samples.size, distanceToday, sinceLastCharge, dailySummaries)
     }
 }
