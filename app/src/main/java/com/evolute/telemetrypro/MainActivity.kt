@@ -29,7 +29,7 @@ import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.ChargingSessionAnalyzer
 import com.evolute.telemetrypro.data.DrivingEfficiencyAnalyzer
-import com.evolute.telemetrypro.data.BridgeConfigStore
+import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
 import com.evolute.telemetrypro.data.TripBatteryComparisonAnalyzer
@@ -54,21 +54,26 @@ private data class RefreshState(
 )
 
 class MainActivity : ComponentActivity() {
-    private lateinit var bridgeStore: BridgeConfigStore
+    private lateinit var tokenStore: KeystoreTokenStore
+    private lateinit var apiClient: ApiClient
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        bridgeStore = BridgeConfigStore(this)
+        tokenStore = KeystoreTokenStore(this)
+        apiClient = ApiClient(tokenStore)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        val existingSession = runCatching { bridgeStore.get() != null }.getOrDefault(false)
+        val existingSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
-                onSessionAvailable = { runCatching { bridgeStore.get() != null }.getOrDefault(false) },
-                onLogin = { token ->
-                    bridgeStore.save(token)
+                onSessionAvailable = { runCatching { tokenStore.get() != null }.getOrDefault(false) },
+                onRequestOtp = { phone, country ->
+                    withContext(Dispatchers.IO) { apiClient.requestOtp(phone.trim(), country.trim()) }
+                },
+                onLogin = { phone, code ->
+                    withContext(Dispatchers.IO) { apiClient.signIn(phone.trim(), code.trim()) }
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
                 onRefresh = {
@@ -115,7 +120,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Returning to the foreground resets Android's dataSync FGS quota.
         // Restart collection if Android stopped it after the background limit.
-        val hasSession = runCatching { bridgeStore.get() != null }.getOrDefault(false)
+        val hasSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
         if (hasSession) {
             runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
         }
@@ -126,7 +131,8 @@ class MainActivity : ComponentActivity() {
 private fun TelemetryProApp(
     hasSession: Boolean,
     onSessionAvailable: () -> Boolean,
-    onLogin: suspend (String) -> Unit,
+    onRequestOtp: suspend (String, String) -> Unit,
+    onLogin: suspend (String, String) -> Unit,
     onRefresh: suspend () -> RefreshState,
     onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
     onTripBatteryComparison: suspend () -> TripBatteryComparisonAnalyzer.Report,
@@ -135,10 +141,12 @@ private fun TelemetryProApp(
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
-    var bridgeToken by rememberSaveable { mutableStateOf("") }
+    var phone by rememberSaveable { mutableStateOf("") }
+    var country by rememberSaveable { mutableStateOf("") }
+    var smsCode by rememberSaveable { mutableStateOf("") }
     var session by remember { mutableStateOf(hasSession) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf(if (hasSession) "MCP bridge настроен" else "Подключите локальный MCP bridge") }
+    var status by remember { mutableStateOf(if (hasSession) "Авторизация Evolute сохранена" else "Войдите в аккаунт Evolute") }
     var tab by remember { mutableStateOf("Главная") }
     var showAdditional by rememberSaveable { mutableStateOf(true) }
     var showTechnicalSensors by rememberSaveable { mutableStateOf(true) }
@@ -264,26 +272,55 @@ private fun TelemetryProApp(
             Spacer(Modifier.height(18.dp))
             if (!session) {
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Подключение EVACONNECT MCP", color = Cyan, fontSize = 18.sp)
-                        Text("1. Запустите evaconnect-mcp bridge в Termux. 2. Скопируйте ключ из ~/.config/evolute/bridge-token.", color = Muted, fontSize = 12.sp)
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Авторизация Evolute", color = Cyan, fontSize = 18.sp)
+                        Text("Вход выполняется прямо на телефоне. Токены сохраняются в зашифрованном Android Keystore.", color = Muted, fontSize = 12.sp)
                         OutlinedTextField(
-                            bridgeToken, { bridgeToken = it.trim() },
-                            label = { Text("Ключ локального bridge") },
+                            phone, { phone = it.filter(Char::isDigit).take(15) },
+                            label = { Text("Телефон с кодом страны") },
                             singleLine = true,
-                            visualTransformation = PasswordVisualTransformation()
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        Button(enabled = !busy && bridgeToken.length >= 32, onClick = {
+                        OutlinedTextField(
+                            country, { country = it.filter(Char::isLetter).take(2).uppercase() },
+                            label = { Text("Код страны аккаунта (2 буквы)") },
+                            placeholder = { Text("Например, RU или FR") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(enabled = !busy && phone.length in 8..15 && country.length == 2, onClick = {
                             busy = true
+                            status = "Запрашиваем SMS-код…"
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { onLogin(bridgeToken) }
-                                    session = true
-                                    status = "Ключ сохранён в Android Keystore • сбор через MCP запущен"
-                                } catch (e: Exception) { status = e.message ?: "Не удалось сохранить ключ" }
+                                    withContext(Dispatchers.IO) { onRequestOtp(phone, country) }
+                                    status = "Запрос SMS принят. Введите полученный код."
+                                } catch (e: Exception) { status = e.message ?: "Не удалось запросить SMS" }
                                 finally { busy = false }
                             }
-                        }) { Text(if (busy) "Подождите…" else "Подключить MCP и начать сбор") }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (busy) "Подождите…" else "Запросить SMS")
+                        }
+                        OutlinedTextField(
+                            smsCode, { smsCode = it.filter(Char::isDigit).take(8) },
+                            label = { Text("Код из SMS") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(enabled = !busy && phone.length in 8..15 && smsCode.length in 4..8, onClick = {
+                            busy = true
+                            status = "Выполняется вход…"
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { onLogin(phone, smsCode) }
+                                    session = true
+                                    status = "Вход выполнен • сбор телеметрии запущен"
+                                } catch (e: Exception) { status = e.message ?: "Ошибка авторизации" }
+                                finally { busy = false }
+                            }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (busy) "Выполняется вход…" else "Войти и начать сбор")
+                        }
                     }
                 }
             } else {
@@ -506,7 +543,7 @@ private fun TelemetryProApp(
             }
             Spacer(Modifier.height(12.dp))
             Text(status, color = Muted, fontSize = 12.sp)
-            Text("Только чтение через EVACONNECT MCP • ключ bridge зашифрован Android Keystore • данные хранятся локально", color = Muted, fontSize = 11.sp)
+            Text("Только чтение через API Evolute • сессия зашифрована Android Keystore • снимки хранятся локально", color = Muted, fontSize = 11.sp)
         }
     }
 }
