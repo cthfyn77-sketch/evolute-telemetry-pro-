@@ -221,9 +221,14 @@ private fun TelemetryProApp(
                 }
                 Spacer(Modifier.height(12.dp))
                 MetricCard(
-                    "Свежесть телеметрии",
-                    if (TelemetryFreshness.isStale(capturedAtMs, clockNowMs)) "Нет свежих данных" else "Данные поступают",
+                    "Свежесть получения телеметрии",
+                    if (TelemetryFreshness.isStale(capturedAtMs, clockNowMs)) "Нет новых снимков" else "Снимки сохраняются",
                     TelemetryFreshness.label(capturedAtMs, clockNowMs)
+                )
+                MetricCard(
+                    "Обновление состояния автомобиля",
+                    TelemetryFreshness.apiStateLabel(snapshot?.updatedAt, clockNowMs),
+                    "Время carStateUpdatedAt из API; отдельно от времени сохранения снимка"
                 )
                 when (tab) {
                     "Главная" -> {
