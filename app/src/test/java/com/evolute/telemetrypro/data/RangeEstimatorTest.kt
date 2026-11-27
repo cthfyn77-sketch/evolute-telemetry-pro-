@@ -58,7 +58,7 @@ class RangeEstimatorTest {
     @Test fun preservesLastValidWindowAcrossTelemetryGap() {
         val estimator = RangeEstimator()
         (0..8).forEach { km -> estimator.add(sample(100.0 - km * 0.5, km.toDouble(), km)) }
-        estimator.add(sample(95.5, 8.5, 10))
+        estimator.add(sample(95.5, 8.5, 12))
         val result = estimator.estimate(95.5, 180.0)!!
         assertEquals(RangeEstimator.Source.MEASURED_1_KM, result.source)
         assertEquals(191.0, result.rangeKm, 0.001)
