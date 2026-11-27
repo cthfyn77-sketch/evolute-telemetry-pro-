@@ -36,4 +36,4 @@ GitHub Actions запускает unit-тесты. Сборка APK должна
 
 ## Постоянная подпись
 
-Для подписанного Release APK необходим один постоянный keystore. Его нельзя хранить в репозитории. В CI должны быть настроены защищённые GitHub Secrets для Base64 keystore, store password, key alias и key password. SHA-256 сертификата итогового APK нужно сверять с заранее зафиксированным отпечатком. Без подтверждённого keystore и совпадающего отпечатка выпуск подписанного APK не считается готовым.
+Для подписанного Release APK используется существующий постоянный keystore из проекта Evolute: alias `evolute`, сертификат SHA-256 `ee10dbf808f3362a5bc1a987a9c6c155a770c21e7bfcc53e2f482225c7ba8bcf`. Новый ключ не создаётся. Сам keystore нельзя хранить в репозитории. В этом репозитории должны быть настроены защищённые GitHub Secrets: `SIGNING_KEYSTORE_BASE64`, `SIGNING_KEYSTORE_PASSWORD`, `SIGNING_KEY_ALIAS` (значение `evolute`) и `SIGNING_KEY_PASSWORD`. Workflow сверяет сертификат собранного APK с указанным отпечатком; при несовпадении публикация блокируется.
