@@ -36,14 +36,12 @@ jobs:
           SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          SIGNING_CERT_SHA256: ${{ secrets.SIGNING_CERT_SHA256 }}
         run: |
           set -euo pipefail
           test -n "$SIGNING_KEYSTORE_BASE64" || (echo "Missing SIGNING_KEYSTORE_BASE64" >&2; exit 1)
           test -n "$SIGNING_KEYSTORE_PASSWORD" || (echo "Missing SIGNING_KEYSTORE_PASSWORD" >&2; exit 1)
           test -n "$SIGNING_KEY_ALIAS" || (echo "Missing SIGNING_KEY_ALIAS" >&2; exit 1)
           test -n "$SIGNING_KEY_PASSWORD" || (echo "Missing SIGNING_KEY_PASSWORD" >&2; exit 1)
-          test -n "$SIGNING_CERT_SHA256" || (echo "Missing SIGNING_CERT_SHA256" >&2; exit 1)
           mkdir -p "$RUNNER_TEMP/evolute-signing"
           printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/evolute-signing/release.jks"
           test -s "$RUNNER_TEMP/evolute-signing/release.jks"
@@ -61,7 +59,6 @@ jobs:
       - name: Verify permanent APK certificate
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
         env:
-          EXPECTED_CERT_SHA256: ${{ secrets.SIGNING_CERT_SHA256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -69,7 +66,7 @@ jobs:
           APK_SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           test -s "$APK"
           "$APK_SIGNER" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
-          EXPECTED="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ':[:space:]' | tr 'A-F' 'a-f')"
+          EXPECTED="ee10dbf808f3362a5bc1a987a9c6c155a770c21e7bfcc53e2f482225c7ba8bcf"
           ACTUAL="$(sed -n 's/.*certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1 | tr -d ':[:space:]' | tr 'A-F' 'a-f')"
           test -n "$EXPECTED"
           test "$ACTUAL" = "$EXPECTED" || (echo "APK certificate does not match the permanent signing certificate" >&2; exit 1)
