@@ -43,6 +43,16 @@ object TelemetryGapAnalyzer {
         )
     }
 
+    /** UI wording describes measured intervals, not a proven network or vehicle outage. */
+    fun dashboardDetail(report: Report): String {
+        if (report.sampleCount < 2) {
+            return "Недостаточно данных за 24 ч для оценки интервалов"
+        }
+        val longest = report.longestGapMs?.let(::durationLabel) ?: "—"
+        val latest = report.latestGapMs?.let(::durationLabel) ?: "—"
+        return "Интервалов между снимками >90 с: ${report.gapsOverThreshold} • максимальный: $longest • последний: $latest"
+    }
+
     fun durationLabel(durationMs: Long): String {
         val seconds = (durationMs.coerceAtLeast(0L) / 1_000L)
         return when {
