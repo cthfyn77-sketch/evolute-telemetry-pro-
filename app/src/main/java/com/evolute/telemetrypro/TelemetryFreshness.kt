@@ -1,5 +1,8 @@
 package com.evolute.telemetrypro
 
+import java.time.Instant
+import java.time.OffsetDateTime
+
 /** Describes the age of the newest locally saved telemetry sample, not vehicle ignition state. */
 object TelemetryFreshness {
     const val STALE_AFTER_MS = 90_000L
