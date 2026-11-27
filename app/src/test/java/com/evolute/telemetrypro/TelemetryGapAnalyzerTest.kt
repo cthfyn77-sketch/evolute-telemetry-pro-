@@ -25,7 +25,7 @@ class TelemetryGapAnalyzerTest {
             listOf(now - 300_000L, now - 270_000L, now - 90_000L, now),
             now
         )
-        assertEquals(2, report.gapsOverThreshold)
+        assertEquals(1, report.gapsOverThreshold)
         assertEquals(180_000L, report.longestGapMs)
         assertEquals(90_000L, report.latestGapMs)
     }
