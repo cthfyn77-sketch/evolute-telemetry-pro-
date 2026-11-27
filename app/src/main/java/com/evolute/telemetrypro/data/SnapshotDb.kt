@@ -70,6 +70,17 @@ class SnapshotDb private constructor(context: Context) :
         if (cursor.moveToFirst()) cursor.getLong(0) else null
     }
 
+    /** Capture timestamps for collection-gap diagnostics; includes online and offline API snapshots. */
+    fun captureTimesSince(sinceMs: Long): List<Long> =
+        readableDatabase.rawQuery(
+            "SELECT captured_ms FROM samples WHERE captured_ms >= ? ORDER BY captured_ms ASC",
+            arrayOf(sinceMs.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getLong(0))
+            }
+        }
+
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
     }

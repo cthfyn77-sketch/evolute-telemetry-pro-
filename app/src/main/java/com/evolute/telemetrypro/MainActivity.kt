@@ -39,7 +39,8 @@ private data class RefreshState(
     val snapshot: ApiClient.Telemetry?,
     val count: Long,
     val estimate: RangeEstimator.Estimate?,
-    val capturedAtMs: Long?
+    val capturedAtMs: Long?,
+    val telemetryGaps: TelemetryGapAnalyzer.Report
 )
 
 class MainActivity : ComponentActivity() {
@@ -70,7 +71,12 @@ class MainActivity : ComponentActivity() {
                     val rangeSoc = if (latest?.online == true) latest.soc else rangeSamples.lastOrNull()?.socPercent
                     val rangeFallback = latest?.takeIf { it.online }?.stockRange
                     val rangeEstimate = rangeSoc?.let { estimator.estimate(it, rangeFallback) }
-                    RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs())
+                    val nowMs = System.currentTimeMillis()
+                    val gapReport = TelemetryGapAnalyzer.analyze(
+                        db.captureTimesSince(nowMs - TelemetryGapAnalyzer.WINDOW_MS),
+                        nowMs
+                    )
+                    RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport)
                 },
                 onBatteryHistory = { periodMs ->
                     val db = SnapshotDb.get(this)
@@ -115,6 +121,7 @@ private fun TelemetryProApp(
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
     var capturedAtMs by remember { mutableStateOf<Long?>(null) }
+    var telemetryGaps by remember { mutableStateOf(TelemetryGapAnalyzer.Report.empty()) }
     var clockNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
@@ -132,6 +139,7 @@ private fun TelemetryProApp(
                 count = result.count
                 estimate = result.estimate
                 capturedAtMs = result.capturedAtMs
+                telemetryGaps = result.telemetryGaps
                 clockNowMs = System.currentTimeMillis()
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Локальная история обновлена"
             } catch (e: Exception) {
@@ -243,6 +251,15 @@ private fun TelemetryProApp(
                             }
                         )
                         MetricCard("Одометр", snapshot?.let { "${"%.1f".format(it.odometer)} км" } ?: "—", "Штатный показатель автомобиля")
+                        MetricCard(
+                            "Интервалы получения снимков • 24 ч",
+                            "${telemetryGaps.sampleCount} снимков",
+                            if (telemetryGaps.sampleCount < 2) {
+                                "Недостаточно данных для оценки интервалов"
+                            } else {
+                                "Пропусков более 90 с: ${telemetryGaps.gapsOverThreshold} • максимальный интервал: ${telemetryGaps.longestGapMs?.let(TelemetryGapAnalyzer::durationLabel) ?: "—"}"
+                            }
+                        )
                         TextButton(onClick = { showAdditional = !showAdditional }) {
                             Text(if (showAdditional) "Скрыть дополнительные показания" else "Показать дополнительные показания")
                         }
