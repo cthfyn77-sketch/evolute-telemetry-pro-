@@ -10,7 +10,6 @@ import android.os.IBinder
 import com.evolute.telemetrypro.data.AuthenticationRequiredException
 import com.evolute.telemetrypro.data.BridgeConfigStore
 import com.evolute.telemetrypro.data.EvaconnectMcpClient
-import com.evolute.telemetrypro.data.AuthenticationRequiredException
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.SnapshotDb
 import kotlinx.coroutines.*
