@@ -6,6 +6,9 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
+/** Refresh credentials are rejected; interactive sign-in is required. */
+class AuthenticationRequiredException(message: String) : IOException(message)
+
 /** Read-only client for the Evolute companion API. */
 class ApiClient(private val tokens: TokenStore) {
     data class Tokens(val access: String, val refresh: String, val userId: String?, val userToken: String?, val widgetId: String?)
@@ -83,7 +86,20 @@ class ApiClient(private val tokens: TokenStore) {
         synchronized(REFRESH_LOCK) {
             val current = tokens.get() ?: throw IOException("Требуется повторная авторизация")
             if (current.access != rejected.access || current.refresh != rejected.refresh) return
-            val j = request("/id-service/auth/refresh-token", "POST", JSONObject().put("refreshToken", current.refresh), false)
+            val response = execute(
+                "/id-service/auth/refresh-token", "POST",
+                JSONObject().put("refreshToken", current.refresh), null
+            )
+            if (response.code in TERMINAL_REFRESH_CODES) {
+                tokens.clear()
+                throw AuthenticationRequiredException("Сессия истекла или отозвана; войдите в аккаунт заново")
+            }
+            if (response.code !in 200..299) {
+                throw IOException("Не удалось обновить сессию: HTTP ${response.code}")
+            }
+            val j = try { JSONObject(response.body) } catch (e: Exception) {
+                throw IOException("Некорректный ответ обновления сессии", e)
+            }
             val access = j.optString("accessToken").ifBlank { j.optString("access_token") }
             val refresh = j.optString("refreshToken").ifBlank { j.optString("refresh_token") }
             if (access.isBlank() || refresh.isBlank()) throw IOException("Не удалось обновить сессию; повторите вход")
@@ -133,7 +149,10 @@ class ApiClient(private val tokens: TokenStore) {
             j.optString("carStateUpdatedAt").takeIf { it.isNotBlank() && it != "null" }, safe)
     }
 
-    companion object { private val REFRESH_LOCK = Any() }
+    companion object {
+        private val REFRESH_LOCK = Any()
+        internal val TERMINAL_REFRESH_CODES = setOf(400, 401, 403)
+    }
 }
 
 interface TokenStore {

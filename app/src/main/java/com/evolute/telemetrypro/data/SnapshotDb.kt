@@ -41,6 +41,46 @@ class SnapshotDb private constructor(context: Context) :
         writableDatabase.insertOrThrow("samples", null, values)
     }
 
+    /** Chronological battery history for the selected period; raw sensor JSON is read unchanged. */
+    fun batteryHistory(capturedAfterMs: Long? = null): List<BatteryHistorySample> {
+        val sql = if (capturedAfterMs == null) {
+            "SELECT captured_at,soc,odometer,sensors_json FROM samples ORDER BY captured_ms ASC"
+        } else {
+            "SELECT captured_at,soc,odometer,sensors_json FROM samples WHERE captured_ms >= ? ORDER BY captured_ms ASC"
+        }
+        val args = capturedAfterMs?.let { arrayOf(it.toString()) }
+        return readableDatabase.rawQuery(sql, args).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(
+                    BatteryHistorySample(
+                        capturedAt = cursor.getString(0),
+                        soc = cursor.getDouble(1),
+                        odometer = cursor.getDouble(2),
+                        sensorsJson = cursor.getString(3)
+                    )
+                )
+            }
+        }
+    }
+
+    /** Wall-clock capture time of the newest locally persisted telemetry sample. */
+    fun latestCapturedAtMs(): Long? = readableDatabase.rawQuery(
+        "SELECT captured_ms FROM samples ORDER BY id DESC LIMIT 1", null
+    ).use { cursor ->
+        if (cursor.moveToFirst()) cursor.getLong(0) else null
+    }
+
+    /** Capture timestamps for collection-gap diagnostics; includes online and offline API snapshots. */
+    fun captureTimesSince(sinceMs: Long): List<Long> =
+        readableDatabase.rawQuery(
+            "SELECT captured_ms FROM samples WHERE captured_ms >= ? ORDER BY captured_ms ASC",
+            arrayOf(sinceMs.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getLong(0))
+            }
+        }
+
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
     }
@@ -57,7 +97,7 @@ class SnapshotDb private constructor(context: Context) :
 
     fun recentSamples(limit: Int = 500): List<RangeEstimator.Sample> =
         readableDatabase.rawQuery(
-            "SELECT odometer,soc,captured_ms,charging FROM samples ORDER BY id DESC LIMIT ?",
+            "SELECT odometer,soc,captured_ms,charging FROM samples WHERE online = 1 ORDER BY id DESC LIMIT ?",
             arrayOf(limit.toString())
         ).use { c ->
             val result = ArrayList<RangeEstimator.Sample>()

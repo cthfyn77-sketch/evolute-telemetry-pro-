@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.evolute.telemetrypro.data.ApiClient
+import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.RangeEstimator
@@ -34,6 +35,14 @@ private val Panel = Color(0xFF1B2933)
 private val Cyan = Color(0xFF28D7D0)
 private val Muted = Color(0xFF9FB0BA)
 
+private data class RefreshState(
+    val snapshot: ApiClient.Telemetry?,
+    val count: Long,
+    val estimate: RangeEstimator.Estimate?,
+    val capturedAtMs: Long?,
+    val telemetryGaps: TelemetryGapAnalyzer.Report
+)
+
 class MainActivity : ComponentActivity() {
     private lateinit var tokenStore: KeystoreTokenStore
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -44,12 +53,10 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         val existingSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
-        if (existingSession) {
-            runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
-        }
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
+                onSessionAvailable = { runCatching { tokenStore.get() != null }.getOrDefault(false) },
                 onRequestCode = { phone, country -> ApiClient(tokenStore).requestOtp(phone, country) },
                 onLogin = { phone, code ->
                     ApiClient(tokenStore).signIn(phone, code)
@@ -59,10 +66,34 @@ class MainActivity : ComponentActivity() {
                     val db = SnapshotDb.get(this)
                     val latest = db.latest()
                     val estimator = RangeEstimator()
-                    db.recentSamples().forEach(estimator::add)
-                    Triple(latest, db.count(), latest?.let { estimator.estimate(it.soc, it.stockRange) })
+                    val rangeSamples = db.recentSamples()
+                    rangeSamples.forEach(estimator::add)
+                    val rangeSoc = if (latest?.online == true) latest.soc else rangeSamples.lastOrNull()?.socPercent
+                    val rangeFallback = latest?.takeIf { it.online }?.stockRange
+                    val rangeEstimate = rangeSoc?.let { estimator.estimate(it, rangeFallback) }
+                    val nowMs = System.currentTimeMillis()
+                    val gapReport = TelemetryGapAnalyzer.analyze(
+                        db.captureTimesSince(nowMs - TelemetryGapAnalyzer.WINDOW_MS),
+                        nowMs
+                    )
+                    RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport)
+                },
+                onBatteryHistory = { periodMs ->
+                    val db = SnapshotDb.get(this)
+                    val cutoff = periodMs?.let { System.currentTimeMillis() - it }
+                    BatteryHistoryAnalyzer.analyze(db.batteryHistory(cutoff))
                 }
             )
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Returning to the foreground resets Android's dataSync FGS quota.
+        // Restart collection if Android stopped it after the background limit.
+        val hasSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
+        if (hasSession) {
+            runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
         }
     }
 }
@@ -70,9 +101,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TelemetryProApp(
     hasSession: Boolean,
+    onSessionAvailable: () -> Boolean,
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
-    onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
+    onRefresh: suspend () -> RefreshState,
+    onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
     var phone by remember { mutableStateOf("") }
@@ -87,24 +120,63 @@ private fun TelemetryProApp(
     var showTechnicalSensors by rememberSaveable { mutableStateOf(true) }
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
+    var capturedAtMs by remember { mutableStateOf<Long?>(null) }
+    var telemetryGaps by remember { mutableStateOf(TelemetryGapAnalyzer.Report.empty()) }
+    var clockNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
+    var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
+    var batteryReport by remember { mutableStateOf<BatteryHistoryAnalyzer.Report?>(null) }
+    var batteryLoading by remember { mutableStateOf(false) }
+    var refreshInFlight by remember { mutableStateOf(false) }
 
     fun refresh() {
+        if (refreshInFlight) return
+        refreshInFlight = true
         scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { onRefresh() }
-                snapshot = result.first
-                count = result.second
-                estimate = result.third
-                status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Данные обновлены локально"
-            } catch (e: Exception) { status = e.message ?: "Ошибка чтения данных" }
+                snapshot = result.snapshot
+                count = result.count
+                estimate = result.estimate
+                capturedAtMs = result.capturedAtMs
+                telemetryGaps = result.telemetryGaps
+                clockNowMs = System.currentTimeMillis()
+                status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Локальная история обновлена"
+            } catch (e: Exception) {
+                status = e.message ?: "Ошибка чтения данных"
+            } finally {
+                refreshInFlight = false
+            }
         }
     }
 
     LaunchedEffect(session) {
         if (session) {
             refresh()
-            while (true) { kotlinx.coroutines.delay(5_000); refresh() }
+            while (true) {
+                kotlinx.coroutines.delay(5_000)
+                clockNowMs = System.currentTimeMillis()
+                val available = withContext(Dispatchers.IO) { onSessionAvailable() }
+                if (!available) {
+                    session = false
+                    status = "Сессия истекла • войдите в аккаунт заново"
+                    break
+                }
+                refresh()
+            }
+        }
+    }
+
+    LaunchedEffect(session, tab, batteryPeriodMs, count) {
+        if (session && tab == "Батарея") {
+            batteryLoading = true
+            try {
+                batteryReport = withContext(Dispatchers.IO) { onBatteryHistory(batteryPeriodMs) }
+            } catch (e: Exception) {
+                status = e.message ?: "Не удалось прочитать историю аккумулятора"
+            } finally {
+                batteryLoading = false
+            }
         }
     }
 
@@ -156,6 +228,16 @@ private fun TelemetryProApp(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+                MetricCard(
+                    "Свежесть получения телеметрии",
+                    if (TelemetryFreshness.isStale(capturedAtMs, clockNowMs)) "Нет новых снимков" else "Снимки сохраняются",
+                    TelemetryFreshness.label(capturedAtMs, clockNowMs)
+                )
+                MetricCard(
+                    "Обновление состояния автомобиля",
+                    TelemetryFreshness.apiStateLabel(snapshot?.updatedAt, clockNowMs),
+                    "Время carStateUpdatedAt из API; отдельно от времени сохранения снимка"
+                )
                 when (tab) {
                     "Главная" -> {
                         MetricCard("Заряд батареи", snapshot?.let { "${it.soc.toInt()}%" } ?: "—", "Последний локальный снимок")
@@ -169,6 +251,11 @@ private fun TelemetryProApp(
                             }
                         )
                         MetricCard("Одометр", snapshot?.let { "${"%.1f".format(it.odometer)} км" } ?: "—", "Штатный показатель автомобиля")
+                        MetricCard(
+                            "Интервалы получения снимков • 24 ч",
+                            "${telemetryGaps.sampleCount} снимков за 24 ч",
+                            TelemetryGapAnalyzer.dashboardDetail(telemetryGaps)
+                        )
                         TextButton(onClick = { showAdditional = !showAdditional }) {
                             Text(if (showAdditional) "Скрыть дополнительные показания" else "Показать дополнительные показания")
                         }
@@ -176,7 +263,12 @@ private fun TelemetryProApp(
                             MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
                         }
                     }
-                    "Батарея" -> MetricCard("Батарея", snapshot?.let { "SOC ${it.soc}%" } ?: "Нет данных", "Снимков сохранено: $count • графики в следующем этапе")
+                    "Батарея" -> BatteryHistoryPanel(
+                        report = batteryReport,
+                        periodMs = batteryPeriodMs,
+                        onPeriodChange = { batteryPeriodMs = it },
+                        loading = batteryLoading
+                    )
                     "Поездки" -> MetricCard("История поездок", "Подключается", "Следующий этап — чтение поездок и маршрутов API")
                     "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
                     else -> {
