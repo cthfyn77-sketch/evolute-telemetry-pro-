@@ -39,7 +39,7 @@ class BatteryHistoryAnalyzerTest {
             BatteryHistorySample("2026-11-27T12:10:01Z", 70.0, 100.0, """{"batteryVoltage":420}"""),
             BatteryHistorySample("2026-11-27T12:10:30Z", 70.0, 100.0, """{"batteryVoltage":421}""")
         ))
-        val metric = report.metrics.single()
+        val metric = report.metrics.single { it.path == "batteryVoltage" }
         assertEquals(3, metric.samples)
         assertEquals(421.0, metric.latest, 0.001)
         assertTrue(BatteryHistoryAnalyzer.hasTelemetryGap(metric.points))
