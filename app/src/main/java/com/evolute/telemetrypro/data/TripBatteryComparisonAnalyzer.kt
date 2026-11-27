@@ -1,7 +1,5 @@
 package com.evolute.telemetrypro.data
 
-import org.json.JSONObject
-
 /** A complete local snapshot used to compare measured battery indicators across a trip. */
 data class TripBatterySample(
     val capturedAtMs: Long,
@@ -73,12 +71,8 @@ object TripBatteryComparisonAnalyzer {
     }
 
     private fun sensor(raw: String, key: String): Double? {
-        return try {
-            val json = JSONObject(raw)
-            if (!json.has(key) || json.isNull(key)) null
-            else json.optString(key).toDoubleOrNull()?.takeIf { it.isFinite() }
-        } catch (_: Exception) {
-            null
-        }
+        val pattern = Regex("\\\"${Regex.escape(key)}\\\"\\s*:\\s*\\\"?(-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)\\\"?")
+        return pattern.find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+            ?.takeIf { it.isFinite() }
     }
 }
