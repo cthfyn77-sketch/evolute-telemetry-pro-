@@ -6,10 +6,10 @@ import org.junit.Test
 
 class EvaconnectMcpClientRefreshPolicyTest {
     @Test
-    fun rejectedRefreshCredentialsRequireInteractiveSignIn() {
-        assertTrue(400 in EvaconnectMcpClient.TERMINAL_REFRESH_CODES)
+    fun onlyUnauthorizedRefreshCredentialsRequireInteractiveSignIn() {
         assertTrue(401 in EvaconnectMcpClient.TERMINAL_REFRESH_CODES)
-        assertTrue(403 in EvaconnectMcpClient.TERMINAL_REFRESH_CODES)
+        assertFalse(400 in EvaconnectMcpClient.TERMINAL_REFRESH_CODES)
+        assertFalse(403 in EvaconnectMcpClient.TERMINAL_REFRESH_CODES)
     }
 
     @Test
