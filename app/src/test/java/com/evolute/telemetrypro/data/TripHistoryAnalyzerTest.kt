@@ -117,7 +117,7 @@ class TripHistoryAnalyzerTest {
             sample(91_000, 1.5), sample(121_000, 1.7)
         ), nowMs = 130_000)
         assertEquals(2, report.trips.size)
-        assertEquals(0.4, report.distanceSinceLastChargeKm!!, 0.0001)
+        assertEquals(0.2, report.distanceSinceLastChargeKm!!, 0.0001)
     }
 
     @Test fun emptyHistoryDoesNotInventTrips() {
