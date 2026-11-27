@@ -41,7 +41,7 @@ class CollectorService : Service() {
             val api = ApiClient(KeystoreTokenStore(this@CollectorService))
             var consecutiveFailures = 0
             while (isActive) {
-                val nextDelayMs: Long
+                var nextDelayMs = 30_000L
                 try {
                     val data = api.fetchTelemetry()
                     val charging = data.sensors["isChargingGunInserted"]?.let {
