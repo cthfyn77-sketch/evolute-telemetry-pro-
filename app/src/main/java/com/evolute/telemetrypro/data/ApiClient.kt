@@ -138,9 +138,10 @@ class ApiClient(private val tokens: TokenStore) {
         }
         val soc = number("batteryPercentage")?.takeIf { it <= 100.0 } ?: throw IOException("SOC недоступен")
         val odo = number("odometer") ?: throw IOException("Одометр недоступен")
+        // Do not collect GPS coordinates or route metadata. Telemetry remains vehicle-state only.
         val names = listOf("batteryTemp", "12VBatteryVoltage", "inBoardTemp", "outsideTemp",
             "remainsBatteryMileage", "isIgnitionOn", "isParkedOn", "isCentralLockingOn",
-            "isChargingGunInserted", "signalLevel", "course", "lat", "lon")
+            "isChargingGunInserted", "signalLevel")
         val safe = names.mapNotNull { key ->
             sensors.opt(key)?.takeUnless { it == JSONObject.NULL }?.let { key to it.toString() }
         }.toMap()
