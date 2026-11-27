@@ -253,12 +253,8 @@ private fun TelemetryProApp(
                         MetricCard("Одометр", snapshot?.let { "${"%.1f".format(it.odometer)} км" } ?: "—", "Штатный показатель автомобиля")
                         MetricCard(
                             "Интервалы получения снимков • 24 ч",
-                            "${telemetryGaps.sampleCount} снимков",
-                            if (telemetryGaps.sampleCount < 2) {
-                                "Недостаточно данных для оценки интервалов"
-                            } else {
-                                "Пропусков более 90 с: ${telemetryGaps.gapsOverThreshold} • максимальный интервал: ${telemetryGaps.longestGapMs?.let(TelemetryGapAnalyzer::durationLabel) ?: "—"}"
-                            }
+                            "${telemetryGaps.sampleCount} снимков за 24 ч",
+                            TelemetryGapAnalyzer.dashboardDetail(telemetryGaps)
                         )
                         TextButton(onClick = { showAdditional = !showAdditional }) {
                             Text(if (showAdditional) "Скрыть дополнительные показания" else "Показать дополнительные показания")
