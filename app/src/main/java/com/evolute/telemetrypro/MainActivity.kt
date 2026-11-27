@@ -163,7 +163,7 @@ private fun TelemetryProApp(
                             "Запас хода",
                             estimate?.let { "${it.rangeKm.toInt()} км" } ?: "— км",
                             when (estimate?.source) {
-                                RangeEstimator.Source.MEASURED_10_KM -> "Расчёт по фактическому расходу SOC за последние 10 км"
+                                RangeEstimator.Source.MEASURED_1_KM -> "Расчёт по фактическому расходу SOC • среднее последних 8 км"
                                 RangeEstimator.Source.OEM_FALLBACK -> "Штатный прогноз автомобиля • недостаточно истории"
                                 else -> "Ожидание данных"
                             }
