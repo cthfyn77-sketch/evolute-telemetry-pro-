@@ -5,8 +5,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TripHistoryAnalyzerTest {
-    private fun sample(t: Long, odo: Double, soc: Double = 90.0, online: Boolean = true) =
-        TripHistorySample(t, odo, soc, online)
+    private fun sample(t: Long, odo: Double, soc: Double = 90.0, online: Boolean = true, charging: Boolean = false) =
+        TripHistorySample(t, odo, soc, online, charging)
 
     @Test fun buildsTripFromObservedOdometerIncrements() {
         val report = TripHistoryAnalyzer.analyze(listOf(
@@ -86,6 +86,38 @@ class TripHistoryAnalyzerTest {
         assertEquals(5.0, report.totalSocUsedPercent, 0.0001)
         assertEquals(0.4, report.averageDistanceKm, 0.0001)
         assertEquals(0.5, report.longestTripKm, 0.0001)
+    }
+
+    @Test fun calculatesDistanceForCurrentLocalDay() {
+        val zone = java.time.ZoneId.of("Europe/Paris")
+        val start = java.time.LocalDate.of(2026, 11, 27).atStartOfDay(zone).toInstant().toEpochMilli()
+        val report = TripHistoryAnalyzer.analyze(listOf(
+            sample(start - 120_000, 1.0), sample(start - 90_000, 1.2),
+            sample(start + 30_000, 1.2), sample(start + 60_000, 1.5)
+        ), nowMs = start + 90_000, zoneId = zone)
+        assertEquals(0.3, report.distanceTodayKm, 0.0001)
+    }
+
+    @Test fun distanceSinceLastChargeStartsAfterChargingMarker() {
+        val report = TripHistoryAnalyzer.analyze(listOf(
+            sample(1_000, 10.0, charging = true), sample(31_000, 10.0),
+            sample(61_000, 10.2), sample(91_000, 10.4)
+        ), nowMs = 100_000)
+        assertEquals(0.4, report.distanceSinceLastChargeKm!!, 0.0001)
+    }
+
+    @Test fun missingChargingMarkerDoesNotInventSinceChargeDistance() {
+        val report = TripHistoryAnalyzer.analyze(listOf(sample(1_000, 1.0), sample(31_000, 1.2)), nowMs = 100_000)
+        assertEquals(null, report.distanceSinceLastChargeKm)
+    }
+
+    @Test fun chargingSampleSplitsTripAndDoesNotCountChargingDistance() {
+        val report = TripHistoryAnalyzer.analyze(listOf(
+            sample(1_000, 1.0), sample(31_000, 1.2), sample(61_000, 1.2, charging = true),
+            sample(91_000, 1.5), sample(121_000, 1.7)
+        ), nowMs = 130_000)
+        assertEquals(2, report.trips.size)
+        assertEquals(0.4, report.distanceSinceLastChargeKm!!, 0.0001)
     }
 
     @Test fun emptyHistoryDoesNotInventTrips() {

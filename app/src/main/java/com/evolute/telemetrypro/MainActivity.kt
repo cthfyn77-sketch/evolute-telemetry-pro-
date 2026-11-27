@@ -302,6 +302,14 @@ private fun TelemetryProApp(
                                 "Локальная реконструкция по одометру • ${it.sampleCount} снимков • исключено разрывов: ${it.excludedGaps}, скачков одометра: ${it.ignoredOdometerJumps}"
                             } ?: "Поездки определяются только по наблюдаемому изменению одометра"
                         )
+                        if (report != null) {
+                            MetricCard("Поездка за день", "${"%.1f".format(report.distanceTodayKm)} км",
+                                "Сумма подтверждённых поездок с начала сегодняшнего дня")
+                            MetricCard("С последней зарядки",
+                                report.distanceSinceLastChargeKm?.let { "${"%.1f".format(it)} км" } ?: "Нет данных",
+                                if (report.distanceSinceLastChargeKm == null) "В локальной истории ещё не зафиксирован достоверный признак зарядки"
+                                else "Пробег по подтверждённым участкам после последнего снимка с зарядкой")
+                        }
                         if (report != null && report.trips.isEmpty()) {
                             MetricCard("Пока нет подтверждённых поездок", "—", "Нужны последовательные онлайн-снимки с увеличением одометра")
                         }

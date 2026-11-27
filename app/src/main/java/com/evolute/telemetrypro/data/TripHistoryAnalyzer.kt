@@ -5,7 +5,8 @@ data class TripHistorySample(
     val capturedAtMs: Long,
     val odometerKm: Double,
     val socPercent: Double,
-    val online: Boolean
+    val online: Boolean,
+    val charging: Boolean = false
 )
 
 object TripHistoryAnalyzer {
@@ -29,7 +30,9 @@ object TripHistoryAnalyzer {
         val trips: List<Trip>,
         val excludedGaps: Int,
         val ignoredOdometerJumps: Int,
-        val sampleCount: Int
+        val sampleCount: Int,
+        val distanceTodayKm: Double,
+        val distanceSinceLastChargeKm: Double?
     ) {
         val totalDistanceKm: Double get() = trips.sumOf { it.distanceKm }
         val totalSocUsedPercent: Double get() = trips.sumOf { it.socUsedPercent }
@@ -38,18 +41,18 @@ object TripHistoryAnalyzer {
         val longestTripKm: Double get() = trips.maxOfOrNull { it.distanceKm } ?: 0.0
 
         companion object {
-            fun empty() = Report(emptyList(), 0, 0, 0)
+            fun empty() = Report(emptyList(), 0, 0, 0, 0.0, null)
         }
     }
 
-    fun analyze(input: List<TripHistorySample>): Report {
+    fun analyze(input: List<TripHistorySample>, nowMs: Long = System.currentTimeMillis(), zoneId: java.time.ZoneId = java.time.ZoneId.systemDefault()): Report {
         val samples = input.asSequence()
             .filter { it.capturedAtMs > 0 && it.odometerKm.isFinite() && it.odometerKm >= 0.0 &&
                 it.socPercent.isFinite() && it.socPercent in 0.0..100.0 }
             .sortedBy { it.capturedAtMs }
             .distinctBy { it.capturedAtMs }
             .toList()
-        if (samples.size < 2) return Report(emptyList(), 0, 0, samples.size)
+        if (samples.size < 2) return Report(emptyList(), 0, 0, samples.size, 0.0, null)
 
         val trips = mutableListOf<Trip>()
         var start: TripHistorySample? = null
@@ -75,7 +78,7 @@ object TripHistoryAnalyzer {
             val current = samples[i]
             val elapsed = current.capturedAtMs - previous.capturedAtMs
             if (elapsed <= 0L) continue
-            if (elapsed > MAX_SAMPLE_GAP_MS || !previous.online || !current.online) {
+            if (elapsed > MAX_SAMPLE_GAP_MS || !previous.online || !current.online || previous.charging || current.charging) {
                 if (elapsed > MAX_SAMPLE_GAP_MS) excludedGaps++
                 finish()
                 continue
@@ -103,6 +106,14 @@ object TripHistoryAnalyzer {
             }
         }
         finish()
-        return Report(trips.asReversed(), excludedGaps, ignoredJumps, samples.size)
+        val orderedTrips = trips.asReversed()
+        val dayStartMs = java.time.LocalDate.ofInstant(java.time.Instant.ofEpochMilli(nowMs), zoneId)
+            .atStartOfDay(zoneId).toInstant().toEpochMilli()
+        val distanceToday = orderedTrips.filter { it.startedAtMs >= dayStartMs && it.startedAtMs <= nowMs }.sumOf { it.distanceKm }
+        val lastChargeAtMs = samples.lastOrNull { it.charging }?.capturedAtMs
+        val sinceLastCharge = lastChargeAtMs?.let { chargeAt ->
+            orderedTrips.filter { it.startedAtMs >= chargeAt }.sumOf { it.distanceKm }
+        }
+        return Report(orderedTrips, excludedGaps, ignoredJumps, samples.size, distanceToday, sinceLastCharge)
     }
 }
