@@ -16,11 +16,11 @@ class SnapshotDbPersistenceTest {
         context.deleteDatabase("evolute_telemetry_pro.sqlite")
         val db = SnapshotDb.get(context)
         try {
-            db.insert(ApiClient.Telemetry(99.0, 1.0, 180.0, true, true, null, emptyMap()))
+            db.insert(EvaconnectMcpClient.Telemetry(99.0, 1.0, 180.0, true, true, null, emptyMap()))
             Thread.sleep(2)
-            db.insert(ApiClient.Telemetry(98.5, 2.0, 175.0, false, false, null, emptyMap()))
+            db.insert(EvaconnectMcpClient.Telemetry(98.5, 2.0, 175.0, false, false, null, emptyMap()))
             Thread.sleep(2)
-            db.insert(ApiClient.Telemetry(98.0, 3.0, 170.0, true, true, null, emptyMap()))
+            db.insert(EvaconnectMcpClient.Telemetry(98.0, 3.0, 170.0, true, true, null, emptyMap()))
 
             assertEquals(3L, db.count())
             assertEquals(3, db.batteryHistory().size)
@@ -42,11 +42,11 @@ class SnapshotDbPersistenceTest {
         context.deleteDatabase("evolute_telemetry_pro.sqlite")
         val db = SnapshotDb.get(context)
         try {
-            db.insert(ApiClient.Telemetry(90.0, 10.0, null, true, true, null, emptyMap()))
+            db.insert(EvaconnectMcpClient.Telemetry(90.0, 10.0, null, true, true, null, emptyMap()))
             Thread.sleep(2)
-            db.insert(ApiClient.Telemetry(89.0, 10.2, null, false, false, null, emptyMap()))
+            db.insert(EvaconnectMcpClient.Telemetry(89.0, 10.2, null, false, false, null, emptyMap()))
             Thread.sleep(2)
-            db.insert(ApiClient.Telemetry(88.0, 10.2, null, true, true, null, emptyMap()))
+            db.insert(EvaconnectMcpClient.Telemetry(88.0, 10.2, null, true, true, null, emptyMap()))
 
             val points = db.tripHistorySamples()
             assertEquals(3, points.size)
@@ -70,7 +70,7 @@ class SnapshotDbPersistenceTest {
         try {
             (0..8).forEach { km ->
                 db.insert(
-                    ApiClient.Telemetry(
+                    EvaconnectMcpClient.Telemetry(
                         soc = 100.0 - km * 0.5,
                         odometer = km.toDouble(),
                         stockRange = 180.0,
