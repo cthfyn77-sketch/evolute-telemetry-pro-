@@ -134,7 +134,7 @@ object TripHistoryAnalyzer {
             if (delta > 0.0) {
                 if (start == null) {
                     start = previous
-                    activeZone = zoneAt(previous) ?: lastKnownZone
+                    activeZone = zoneAt(previous) ?: zoneAt(current) ?: lastKnownZone
                 }
                 if (activeZone == null) activeZone = zoneAt(current) ?: lastKnownZone
                 distance += delta
