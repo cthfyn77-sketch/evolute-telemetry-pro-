@@ -4,87 +4,46 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class VehicleMovementStateTest {
-    private fun sample(
-        time: Long, odo: Double, locked: Boolean?, online: Boolean = true, ready: Boolean = true
-    ) = VehicleMovementState.Sample(time, odo, online, ready, locked)
+    private fun sample(time: Long, ready: Boolean, online: Boolean = true) =
+        VehicleMovementState.Sample(time, online, ready)
 
-    @Test fun movementChangesStateToInTransit() {
-        assertEquals(VehicleMovementState.State.IN_TRANSIT, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true),
-            sample(31_000, 10.1, true)
-        )))
+    @Test fun readyTrueMeansInTransit() {
+        assertEquals(VehicleMovementState.State.IN_TRANSIT,
+            VehicleMovementState.analyze(listOf(sample(1_000, true))))
     }
 
-    @Test fun stopDoesNotClearTransitUntilDoorsUnlock() {
-        assertEquals(VehicleMovementState.State.IN_TRANSIT, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true),
-            sample(31_000, 10.1, true),
-            sample(61_000, 10.1, true),
-            sample(91_000, 10.1, true)
-        )))
-        assertEquals(VehicleMovementState.State.READY, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true),
-            sample(31_000, 10.1, true),
-            sample(61_000, 10.1, false)
-        )))
+    @Test fun readyFalseMeansNotReady() {
+        assertEquals(VehicleMovementState.State.NOT_READY,
+            VehicleMovementState.analyze(listOf(sample(1_000, false))))
     }
 
-    @Test fun unlockingDuringMovementDoesNotClearTransit() {
-        assertEquals(VehicleMovementState.State.IN_TRANSIT, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true),
-            sample(31_000, 10.1, false)
-        )))
-    }
-
-    @Test fun missingLockSignalPreservesTransitState() {
-        assertEquals(VehicleMovementState.State.IN_TRANSIT, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true),
-            sample(31_000, 10.1, true),
-            sample(61_000, 10.1, null)
-        )))
-    }
-
-    @Test fun offlineSamplesDoNotCreateMovementOrUnlockTransition() {
-        assertEquals(VehicleMovementState.State.IN_TRANSIT, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true),
-            sample(31_000, 10.1, true),
-            sample(61_000, 10.1, false, online = false)
-        )))
-    }
-
-    @Test fun staleIntervalsDoNotCreateMovementOrClearTransit() {
-        assertEquals(VehicleMovementState.State.READY, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true),
-            sample(200_000, 10.1, false)
-        )))
-    }
-
-
-    @Test fun movementWithoutReadyFlagNeverShowsInTransit() {
+    @Test fun latestOnlineReadyValueDeterminesState() {
         assertEquals(VehicleMovementState.State.NOT_READY, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true, ready = false),
-            sample(31_000, 10.1, true, ready = false)
+            sample(1_000, true),
+            sample(31_000, false)
+        )))
+        assertEquals(VehicleMovementState.State.IN_TRANSIT, VehicleMovementState.analyze(listOf(
+            sample(1_000, false),
+            sample(31_000, true)
         )))
     }
 
-    @Test fun readyTurningOffImmediatelyClearsInTransitLabel() {
+    @Test fun offlineSamplesAreIgnored() {
+        assertEquals(VehicleMovementState.State.IN_TRANSIT, VehicleMovementState.analyze(listOf(
+            sample(1_000, true),
+            sample(31_000, false, online = false)
+        )))
+    }
+
+    @Test fun noOnlineSamplesMeansUnknown() {
+        assertEquals(VehicleMovementState.State.UNKNOWN,
+            VehicleMovementState.analyze(listOf(sample(1_000, true, online = false))))
+    }
+
+    @Test fun latestTimestampWinsEvenWhenInputIsUnordered() {
         assertEquals(VehicleMovementState.State.NOT_READY, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true),
-            sample(31_000, 10.1, true),
-            sample(61_000, 10.1, true, ready = false)
-        )))
-    }
-
-    @Test fun readyTurningOnAtRestShowsReadyUntilMovementObserved() {
-        assertEquals(VehicleMovementState.State.READY, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true, ready = false),
-            sample(31_000, 10.0, true, ready = true)
-        )))
-    }
-
-    @Test fun initialReadyAndLockedStateIsReady() {
-        assertEquals(VehicleMovementState.State.READY, VehicleMovementState.analyze(listOf(
-            sample(1_000, 10.0, true)
+            sample(31_000, false),
+            sample(1_000, true)
         )))
     }
 }
