@@ -6,7 +6,9 @@ data class TripHistorySample(
     val odometerKm: Double,
     val socPercent: Double,
     val online: Boolean,
-    val charging: Boolean = false
+    val charging: Boolean = false,
+    val latitude: Double? = null,
+    val longitude: Double? = null
 )
 
 object TripHistoryAnalyzer {
@@ -21,7 +23,8 @@ object TripHistoryAnalyzer {
         val endOdometerKm: Double,
         val distanceKm: Double,
         val startSocPercent: Double,
-        val endSocPercent: Double
+        val endSocPercent: Double,
+        val timeZoneId: String = "Europe/Moscow"
     ) {
         val socUsedPercent: Double get() = (startSocPercent - endSocPercent).coerceAtLeast(0.0)
         /** Observed timestamp span; may include short stationary pauses. */
@@ -33,7 +36,8 @@ object TripHistoryAnalyzer {
         val tripCount: Int,
         val totalDistanceKm: Double,
         val totalObservedDurationMs: Long,
-        val totalSocUsedPercent: Double
+        val totalSocUsedPercent: Double,
+        val timeZoneId: String = "Europe/Moscow"
     )
 
     data class Report(
@@ -60,7 +64,12 @@ object TripHistoryAnalyzer {
         }
     }
 
-    fun analyze(input: List<TripHistorySample>, nowMs: Long = System.currentTimeMillis(), zoneId: java.time.ZoneId = java.time.ZoneId.of("Europe/Moscow")): Report {
+    fun analyze(
+        input: List<TripHistorySample>,
+        nowMs: Long = System.currentTimeMillis(),
+        zoneId: java.time.ZoneId = java.time.ZoneId.of("Europe/Moscow"),
+        zoneForCoordinates: (latitude: Double, longitude: Double) -> java.time.ZoneId? = { _, _ -> null }
+    ): Report {
         val samples = input.asSequence()
             .filter { it.capturedAtMs > 0 && it.odometerKm.isFinite() && it.odometerKm >= 0.0 &&
                 it.socPercent.isFinite() && it.socPercent in 0.0..100.0 }
@@ -73,6 +82,7 @@ object TripHistoryAnalyzer {
         var start: TripHistorySample? = null
         var lastMovement: TripHistorySample? = null
         var distance = 0.0
+        var activeZone: java.time.ZoneId? = null
         var excludedGaps = 0
         var ignoredJumps = 0
 
@@ -81,11 +91,13 @@ object TripHistoryAnalyzer {
             val last = lastMovement
             if (first != null && last != null && distance > 0.0) {
                 trips += Trip(first.capturedAtMs, last.capturedAtMs, first.odometerKm,
-                    last.odometerKm, distance, first.socPercent, last.socPercent)
+                    last.odometerKm, distance, first.socPercent, last.socPercent,
+                    (activeZone ?: zoneId).id)
             }
             start = null
             lastMovement = null
             distance = 0.0
+            activeZone = null
         }
 
         for (i in 1 until samples.size) {
@@ -110,7 +122,17 @@ object TripHistoryAnalyzer {
                 continue
             }
             if (delta > 0.0) {
-                if (start == null) start = previous
+                if (start == null) {
+                    start = previous
+                    activeZone = previous.latitude?.let { lat -> previous.longitude?.let { lon ->
+                        zoneForCoordinates(lat, lon)
+                    } }
+                }
+                if (activeZone == null) {
+                    activeZone = current.latitude?.let { lat -> current.longitude?.let { lon ->
+                        zoneForCoordinates(lat, lon)
+                    } }
+                }
                 distance += delta
                 lastMovement = current
             } else {
@@ -122,8 +144,11 @@ object TripHistoryAnalyzer {
         }
         finish()
         val orderedTrips = trips.asReversed()
-        val dayStartMs = java.time.LocalDate.ofInstant(java.time.Instant.ofEpochMilli(nowMs), zoneId)
-            .atStartOfDay(zoneId).toInstant().toEpochMilli()
+        val currentZone = samples.lastOrNull()?.let { sample ->
+            sample.latitude?.let { lat -> sample.longitude?.let { lon -> zoneForCoordinates(lat, lon) } }
+        } ?: zoneId
+        val dayStartMs = java.time.LocalDate.ofInstant(java.time.Instant.ofEpochMilli(nowMs), currentZone)
+            .atStartOfDay(currentZone).toInstant().toEpochMilli()
         val distanceToday = samples.zipWithNext().sumOf { (previous, current) ->
             val elapsed = current.capturedAtMs - previous.capturedAtMs
             val delta = current.odometerKm - previous.odometerKm
@@ -140,16 +165,21 @@ object TripHistoryAnalyzer {
         // Attribute each complete reconstructed trip to its local start date.
         // This avoids splitting or shifting a trip's totals across calendar days.
         val dailySummaries = orderedTrips
-            .groupBy { java.time.Instant.ofEpochMilli(it.startedAtMs).atZone(zoneId).toLocalDate() }
+            .groupBy { trip ->
+                val tripZone = java.time.ZoneId.of(trip.timeZoneId)
+                java.time.Instant.ofEpochMilli(trip.startedAtMs).atZone(tripZone).toLocalDate() to trip.timeZoneId
+            }
             .entries
-            .sortedByDescending { it.key }
-            .map { (date, dayTrips) ->
+            .sortedByDescending { it.key.first }
+            .map { (dayKey, dayTrips) ->
+                val (date, tripZoneId) = dayKey
                 DailySummary(
                     date = date,
                     tripCount = dayTrips.size,
                     totalDistanceKm = dayTrips.sumOf { it.distanceKm },
                     totalObservedDurationMs = dayTrips.sumOf { it.observedDurationMs },
-                    totalSocUsedPercent = dayTrips.sumOf { it.socUsedPercent }
+                    totalSocUsedPercent = dayTrips.sumOf { it.socUsedPercent },
+                    timeZoneId = tripZoneId
                 )
             }
         return Report(orderedTrips, excludedGaps, ignoredJumps, samples.size, distanceToday, sinceLastCharge, dailySummaries)
