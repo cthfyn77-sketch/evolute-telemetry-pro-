@@ -49,12 +49,16 @@ class CollectorService : Service() {
                         it.equals("true", true) || it == "1"
                     } == true
                     db.insert(data, charging)
-                    estimator.add(RangeEstimator.Sample(data.odometer, data.soc, System.currentTimeMillis(), charging))
-                    val range = estimator.estimate(data.soc, data.stockRange)
-                    val rangeText = range?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
                     consecutiveFailures = 0
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(0)
-                    updateNotification("SOC ${data.soc.toInt()}% • опрос каждые 30 с$rangeText")
+                    if (data.online) {
+                        estimator.add(RangeEstimator.Sample(data.odometer, data.soc, System.currentTimeMillis(), charging))
+                        val range = estimator.estimate(data.soc, data.stockRange)
+                        val rangeText = range?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
+                        updateNotification("SOC ${data.soc.toInt()}% • опрос каждые 30 с$rangeText")
+                    } else {
+                        updateNotification("Автомобиль офлайн • снимок сохранён; расчёт запаса приостановлен")
+                    }
                 } catch (e: Exception) {
                     if (e is AuthenticationRequiredException) {
                         updateNotification("Сессия истекла • войдите в аккаунт заново")
