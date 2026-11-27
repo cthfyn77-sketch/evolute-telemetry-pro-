@@ -27,6 +27,7 @@ import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
 import com.evolute.telemetrypro.data.RangeEstimator
+import com.evolute.telemetrypro.data.VehicleMovementState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -41,7 +42,8 @@ private data class RefreshState(
     val count: Long,
     val estimate: RangeEstimator.Estimate?,
     val capturedAtMs: Long?,
-    val telemetryGaps: TelemetryGapAnalyzer.Report
+    val telemetryGaps: TelemetryGapAnalyzer.Report,
+    val vehicleState: VehicleMovementState.State
 )
 
 class MainActivity : ComponentActivity() {
@@ -77,7 +79,8 @@ class MainActivity : ComponentActivity() {
                         db.captureTimesSince(nowMs - TelemetryGapAnalyzer.WINDOW_MS),
                         nowMs
                     )
-                    RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport)
+                    RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport,
+                        VehicleMovementState.analyze(db.vehicleMovementSamples()))
                 },
                 onTripHistory = {
                     TripHistoryAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
@@ -127,6 +130,7 @@ private fun TelemetryProApp(
     var count by remember { mutableLongStateOf(0L) }
     var capturedAtMs by remember { mutableStateOf<Long?>(null) }
     var telemetryGaps by remember { mutableStateOf(TelemetryGapAnalyzer.Report.empty()) }
+    var vehicleState by remember { mutableStateOf(VehicleMovementState.State.UNKNOWN) }
     var clockNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
@@ -147,6 +151,7 @@ private fun TelemetryProApp(
                 estimate = result.estimate
                 capturedAtMs = result.capturedAtMs
                 telemetryGaps = result.telemetryGaps
+                vehicleState = result.vehicleState
                 clockNowMs = System.currentTimeMillis()
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Локальная история обновлена"
             } catch (e: Exception) {
@@ -280,7 +285,16 @@ private fun TelemetryProApp(
                             Text(if (showAdditional) "Скрыть дополнительные показания" else "Показать дополнительные показания")
                         }
                         if (showAdditional) {
-                            MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
+                            MetricCard(
+                                "Состояние автомобиля",
+                                if (TelemetryFreshness.isStale(capturedAtMs, clockNowMs)) "Нет свежих данных" else when (vehicleState) {
+                                    VehicleMovementState.State.IN_TRANSIT -> "В пути"
+                                    VehicleMovementState.State.READY -> "Готов к движению"
+                                    VehicleMovementState.State.NOT_READY -> "Не готов к движению"
+                                    VehicleMovementState.State.UNKNOWN -> "Нет данных"
+                                },
+                                "После начала движения статус сохраняется при остановках до подтверждённой разблокировки дверей"
+                            )
                         }
                     }
                     "Батарея" -> BatteryHistoryPanel(
