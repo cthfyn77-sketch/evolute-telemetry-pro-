@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
-                onSessionAvailable = { runCatching { tokenStore.get() != null }.getOrDefault(false) },
+                onSessionAvailable = { runCatching { bridgeStore.get() != null }.getOrDefault(false) },
                 onLogin = { token ->
                     bridgeStore.save(token)
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Returning to the foreground resets Android's dataSync FGS quota.
         // Restart collection if Android stopped it after the background limit.
-        val hasSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
+        val hasSession = runCatching { bridgeStore.get() != null }.getOrDefault(false)
         if (hasSession) {
             runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
         }
