@@ -40,17 +40,21 @@ object TripBatteryComparisonAnalyzer {
         input: List<TripBatterySample>
     ): Report {
         val samples = input.asSequence()
-            .filter { it.capturedAtMs > 0L && it.socPercent.isFinite() && it.socPercent in 0.0..100.0 }
+            .filter { it.capturedAtMs > 0L }
             .sortedBy { it.capturedAtMs }
             .distinctBy { it.capturedAtMs }
             .toList()
-
         val comparisons = trips.mapNotNull { trip ->
             val duringTrip = samples.filter {
-                it.capturedAtMs in trip.startedAtMs..trip.endedAtMs &&
-                    it.online && !it.charging
+                it.capturedAtMs in trip.startedAtMs..trip.endedAtMs
             }
-            if (duringTrip.size < 2) return@mapNotNull null
+            if (duringTrip.size < 2 || duringTrip.any {
+                    !it.socPercent.isFinite() || it.socPercent !in 0.0..100.0 ||
+                        !it.online || it.charging
+                }) return@mapNotNull null
+            if (duringTrip.zipWithNext().any {
+                    it.second.capturedAtMs - it.first.capturedAtMs !in 1..TripHistoryAnalyzer.MAX_SAMPLE_GAP_MS
+                }) return@mapNotNull null
             val first = duringTrip.first()
             val last = duringTrip.last()
             Comparison(
