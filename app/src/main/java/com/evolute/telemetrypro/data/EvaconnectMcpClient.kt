@@ -499,6 +499,51 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
         }
     }
 
+    /**
+     * Kotlin equivalent of Python mcp_server.dispatch_tool().
+     * Only the six read-only tools are registered; OTP and vehicle commands
+     * are deliberately not exposed through the tool dispatcher.
+     */
+    fun dispatchTool(name: String, arguments: JSONObject = JSONObject()): Any = when (name) {
+        "evolute_status" -> evoluteStatus(
+            arguments.optString("car_id").takeIf { it.isNotBlank() },
+            arguments.optBoolean("include_pii", false)
+        )
+        "evolute_vehicles" -> evoluteVehicles(arguments.optBoolean("include_pii", false))
+        "evolute_trips" -> evoluteTrips(
+            carId = arguments.optString("car_id").takeIf { it.isNotBlank() },
+            limit = arguments.optInt("limit", 5),
+            offset = arguments.optInt("offset", 0),
+            sortBy = arguments.optString("sort_by", "DATE"),
+            sortDir = arguments.optString("sort_dir", "DESC"),
+            includePii = arguments.optBoolean("include_pii", false)
+        )
+        "evolute_trip" -> {
+            val travelId = arguments.opt("travel_id")?.toString()?.toIntOrNull()
+                ?: throw IllegalArgumentException("travel_id обязателен и должен быть целым числом")
+            val startTime = arguments.opt("start_time")?.toString()?.toLongOrNull()
+                ?: throw IllegalArgumentException("start_time обязателен и должен быть числом")
+            evoluteTrip(
+                travelId = travelId,
+                startTime = startTime,
+                carId = arguments.optString("car_id").takeIf { it.isNotBlank() },
+                includeTrack = arguments.optBoolean("include_track", false),
+                includePii = arguments.optBoolean("include_pii", false)
+            )
+        }
+        "evolute_charge" -> evoluteCharge()
+        "evolute_auth_status" -> {
+            val status = evoluteAuthStatus()
+            JSONObject()
+                .put("has_access_token", status.hasAccessToken)
+                .put("has_refresh_token", status.hasRefreshToken)
+                .put("has_default_car_id", status.hasDefaultCarId)
+                .put("session_valid", status.sessionValid)
+                .put("user_id", status.userId.jsonOrNull())
+        }
+        else -> throw IllegalArgumentException("Неизвестный read-only MCP инструмент: $name")
+    }
+
     private fun publicTripSummary(trip: JSONObject, includePii: Boolean): JSONObject {
         val result = JSONObject()
         val keys = listOf(
