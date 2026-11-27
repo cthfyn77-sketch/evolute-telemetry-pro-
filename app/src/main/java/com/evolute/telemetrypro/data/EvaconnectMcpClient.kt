@@ -32,7 +32,10 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
         val online: Boolean,
         val ready: Boolean?,
         val updatedAt: String?,
-        val sensors: Map<String, String>
+        val sensors: Map<String, String>,
+        val onlineState: Any? = null,
+        val warnings: Any? = null,
+        val buttons: List<JSONObject> = emptyList()
     )
 
     data class Vehicle(
@@ -333,7 +336,12 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
             ready = if (json.has("isCarStateReady") && json.opt("isCarStateReady") != JSONObject.NULL)
                 json.optBoolean("isCarStateReady") else null,
             updatedAt = json.opt("carStateUpdatedAt")?.takeUnless { it == JSONObject.NULL }?.toString(),
-            sensors = safeSensors
+            sensors = safeSensors,
+            onlineState = json.opt("onlineState").takeUnless { it == JSONObject.NULL },
+            warnings = json.opt("warnings").takeUnless { it == JSONObject.NULL },
+            buttons = (json.optJSONArray("buttons") ?: JSONArray()).let { array ->
+                (0 until array.length()).mapNotNull { array.optJSONObject(it) }
+            }
         )
         cachedTelemetry = now to telemetry
         return telemetry
@@ -373,14 +381,21 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
             .put("signal", value("signalLevel"))
         return JSONObject()
             .put("online", telemetry.online)
-            .put("online_state", JSONObject.NULL)
+            .put("online_state", telemetry.onlineState.jsonOrNull())
             .put("car_state_updated_at", telemetry.updatedAt ?: JSONObject.NULL)
             .put("charge", charge)
             .put("climate", climate)
             .put("body", body)
             .put("drive", drive)
-            .put("buttons", JSONArray())
-            .put("warnings", JSONObject.NULL)
+            .put("buttons", JSONArray().also { array ->
+                telemetry.buttons.forEach { button ->
+                    array.put(JSONObject()
+                        .put("title", button.opt("title").jsonOrNull())
+                        .put("status", button.opt("status").jsonOrNull())
+                        .put("enabled", button.opt("enabled").jsonOrNull()))
+                }
+            })
+            .put("warnings", telemetry.warnings.jsonOrNull())
             .also {
                 // includePii is explicit, but the normal mobile snapshot deliberately
                 // excludes GPS from the persisted Telemetry model in all cases.
@@ -503,10 +518,24 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
                 "batteryConsumption" -> "battery_consumption"
                 else -> key
             }
-            result.put(outputKey, trip.opt(key).jsonOrNull())
+            val raw = trip.opt(key)
+            val value = when (key) {
+                "odometer", "battery", "fuel" -> firstLast(raw)
+                "id", "distance", "batteryConsumption" -> raw.toString().toLongOrNull() ?: raw
+                else -> raw
+            }
+            result.put(outputKey, value.jsonOrNull())
         }
         if (includePii) result.put("description", trip.opt("description").jsonOrNull())
         return result
+    }
+
+    private fun firstLast(value: Any?): Any {
+        if (value == null || value == JSONObject.NULL) return JSONObject.NULL
+        if (value !is JSONObject) return JSONObject.NULL
+        return JSONObject()
+            .put("first", value.opt("first").jsonOrNull())
+            .put("last", value.opt("last").jsonOrNull())
     }
 
     private fun publicTripDetails(trip: JSONObject, includePii: Boolean, includeTrack: Boolean): JSONObject {
