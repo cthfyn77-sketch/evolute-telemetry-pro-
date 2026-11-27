@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
+import com.evolute.telemetrypro.data.ChargingSessionAnalyzer
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
@@ -85,6 +86,9 @@ class MainActivity : ComponentActivity() {
                 onTripHistory = {
                     TripHistoryAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
                 },
+                onChargingHistory = {
+                    ChargingSessionAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
+                },
                 onBatteryHistory = { periodMs ->
                     val db = SnapshotDb.get(this)
                     val cutoff = periodMs?.let { System.currentTimeMillis() - it }
@@ -113,6 +117,7 @@ private fun TelemetryProApp(
     onLogin: suspend (String, String) -> Unit,
     onRefresh: suspend () -> RefreshState,
     onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
+    onChargingHistory: suspend () -> ChargingSessionAnalyzer.Report,
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
@@ -136,6 +141,8 @@ private fun TelemetryProApp(
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
     var batteryReport by remember { mutableStateOf<BatteryHistoryAnalyzer.Report?>(null) }
     var tripReport by remember { mutableStateOf<TripHistoryAnalyzer.Report?>(null) }
+    var chargingReport by remember { mutableStateOf<ChargingSessionAnalyzer.Report?>(null) }
+    var chargingLoading by remember { mutableStateOf(false) }
     var tripLoading by remember { mutableStateOf(false) }
     var batteryLoading by remember { mutableStateOf(false) }
     var refreshInFlight by remember { mutableStateOf(false) }
@@ -188,6 +195,19 @@ private fun TelemetryProApp(
                 status = e.message ?: "Не удалось прочитать историю поездок"
             } finally {
                 tripLoading = false
+            }
+        }
+    }
+
+    LaunchedEffect(session, tab, count) {
+        if (session && tab == "Зарядки") {
+            chargingLoading = true
+            try {
+                chargingReport = withContext(Dispatchers.IO) { onChargingHistory() }
+            } catch (e: Exception) {
+                status = e.message ?: "Не удалось прочитать историю подключений"
+            } finally {
+                chargingLoading = false
             }
         }
     }
@@ -248,7 +268,7 @@ private fun TelemetryProApp(
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("Главная", "Батарея", "Поездки", "Аналитика", "Техника").forEach {
+                    listOf("Главная", "Батарея", "Поездки", "Зарядки", "Аналитика", "Техника").forEach {
                         FilterChip(selected = tab == it, onClick = { tab = it }, label = { Text(it, fontSize = 10.sp) })
                     }
                 }
@@ -346,6 +366,29 @@ private fun TelemetryProApp(
                         }
                         if (report != null) {
                             Text("Расстояние через разрывы телеметрии и скачки одометра не засчитывается. Маршрут и адреса не отображаются: подтверждённого API маршрутов пока нет.", color = Muted, fontSize = 11.sp)
+                        }
+                    }
+                    "Зарядки" -> {
+                        val report = chargingReport
+                        MetricCard("История подключений кабеля", when {
+                            chargingLoading -> "Загрузка…"
+                            report == null -> "Нет данных"
+                            else -> "${report.sessions.size} сессий"
+                        }, "Определяется по isChargingGunInserted • это признак подключения кабеля, а не подтверждение мощности зарядки")
+                        if (report != null) {
+                            MetricCard("Завершённые подключения", "${report.completedCount}", "Сессии, в которых телеметрия зафиксировала отключение кабеля")
+                            MetricCard("Прирост SOC", "+${"%.1f".format(report.totalSocIncreasePercent)} п.п.", "Сумма положительного изменения SOC в завершённых сессиях; энергия в кВт·ч не рассчитывается без достоверного счётчика")
+                            if (report.sessions.isEmpty()) MetricCard("Подключений пока нет", "—", "Нужны онлайн-снимки с подтверждённым флагом isChargingGunInserted")
+                            report.sessions.forEachIndexed { index, item ->
+                                val start = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(item.startedAtMs))
+                                val end = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(item.endedAtMs))
+                                val stateText = when (item.status) {
+                                    ChargingSessionAnalyzer.Status.CONNECTED -> "Кабель подключён по последнему снимку"
+                                    ChargingSessionAnalyzer.Status.COMPLETED -> "Кабель отключён"
+                                    ChargingSessionAnalyzer.Status.INTERRUPTED -> "Разрыв телеметрии"
+                                }
+                                MetricCard("Подключение ${report.sessions.size - index}", "${"%.1f".format(item.startSocPercent)}% → ${"%.1f".format(item.endSocPercent)}%", "$start–$end • изменение SOC ${if (item.socChangePercent >= 0) "+" else ""}${"%.1f".format(item.socChangePercent)} п.п. • $stateText")
+                            }
                         }
                     }
                     "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
