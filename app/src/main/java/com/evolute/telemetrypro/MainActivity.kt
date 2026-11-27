@@ -45,9 +45,6 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         val existingSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
-        if (existingSession) {
-            runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
-        }
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
@@ -69,6 +66,16 @@ class MainActivity : ComponentActivity() {
                     BatteryHistoryAnalyzer.analyze(db.batteryHistory(cutoff))
                 }
             )
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Returning to the foreground resets Android's dataSync FGS quota.
+        // Restart collection if Android stopped it after the background limit.
+        val hasSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
+        if (hasSession) {
+            runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
         }
     }
 }
