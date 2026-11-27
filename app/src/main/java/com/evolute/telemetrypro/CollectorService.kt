@@ -61,7 +61,7 @@ class CollectorService : Service() {
                         stopSelf()
                         return@launch
                     }
-                    consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(30)
+                    consecutiveFailures = CollectorRetryBackoff.nextFailureCount(consecutiveFailures)
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
                     updateNotification("Нет свежих данных • повтор через ${nextDelayMs / 1000} с • ${e.message?.take(45) ?: "ошибка API"}")
                 }
