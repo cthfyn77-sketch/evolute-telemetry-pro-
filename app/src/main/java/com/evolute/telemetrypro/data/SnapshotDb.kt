@@ -81,6 +81,25 @@ class SnapshotDb private constructor(context: Context) :
             }
         }
 
+
+    /** Raw locally captured points for conservative odometer-based trip reconstruction. */
+    fun tripHistorySamples(limit: Int = 20_000): List<TripHistorySample> =
+        readableDatabase.rawQuery(
+            "SELECT captured_ms,odometer,soc,online FROM samples ORDER BY captured_ms DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(
+                    TripHistorySample(
+                        capturedAtMs = cursor.getLong(0),
+                        odometerKm = cursor.getDouble(1),
+                        socPercent = cursor.getDouble(2),
+                        online = cursor.getInt(3) == 1
+                    )
+                )
+            }.asReversed()
+        }
+
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
     }
