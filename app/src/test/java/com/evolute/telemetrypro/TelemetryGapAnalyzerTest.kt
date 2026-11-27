@@ -31,6 +31,34 @@ class TelemetryGapAnalyzerTest {
     }
 
     @Test
+    fun ninetySecondBoundaryIsStrictAndNinetyOneSecondsIsCounted() {
+        val now = 1_000_000L
+        val report = TelemetryGapAnalyzer.analyze(
+            listOf(now - 181_000L, now - 90_000L, now),
+            now
+        )
+        assertEquals(1, report.gapsOverThreshold)
+        assertEquals(91_000L, report.longestGapMs)
+    }
+
+    @Test
+    fun dashboardExplainsTheMeasuredIntervalsWithoutClaimingAnOutage() {
+        val now = 1_000_000L
+        val report = TelemetryGapAnalyzer.analyze(
+            listOf(now - 180_000L, now - 30_000L, now),
+            now
+        )
+        assertEquals(
+            "Интервалов между снимками >90 с: 1 • максимальный: 2 мин 30 с • последний: 30 с",
+            TelemetryGapAnalyzer.dashboardDetail(report)
+        )
+        assertEquals(
+            "Недостаточно данных за 24 ч для оценки интервалов",
+            TelemetryGapAnalyzer.dashboardDetail(TelemetryGapAnalyzer.Report.empty())
+        )
+    }
+
+    @Test
     fun timestampsAreSortedAndDuplicatesAreIgnored() {
         val now = 1_000_000L
         val report = TelemetryGapAnalyzer.analyze(
