@@ -105,8 +105,11 @@ private fun TelemetryProApp(
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
     var batteryReport by remember { mutableStateOf<BatteryHistoryAnalyzer.Report?>(null) }
     var batteryLoading by remember { mutableStateOf(false) }
+    var refreshInFlight by remember { mutableStateOf(false) }
 
     fun refresh() {
+        if (refreshInFlight) return
+        refreshInFlight = true
         scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { onRefresh() }
@@ -114,7 +117,11 @@ private fun TelemetryProApp(
                 count = result.second
                 estimate = result.third
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Данные обновлены локально"
-            } catch (e: Exception) { status = e.message ?: "Ошибка чтения данных" }
+            } catch (e: Exception) {
+                status = e.message ?: "Ошибка чтения данных"
+            } finally {
+                refreshInFlight = false
+            }
         }
     }
 
