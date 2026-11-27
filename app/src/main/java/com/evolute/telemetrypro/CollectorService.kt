@@ -7,14 +7,14 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import com.evolute.telemetrypro.data.ApiClient
+import com.evolute.telemetrypro.data.EvaconnectMcpClient
 import com.evolute.telemetrypro.data.AuthenticationRequiredException
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.SnapshotDb
 import kotlinx.coroutines.*
 
-/** Collects read-only vehicle telemetry directly from the Evolute API on this device. */
+/** Collects read-only vehicle telemetry through the embedded evaconnect client on this device. */
 class CollectorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
@@ -31,7 +31,7 @@ class CollectorService : Service() {
         if (pollJob?.isActive == true) return START_STICKY
         pollJob = scope.launch {
             val tokens = KeystoreTokenStore(this@CollectorService)
-            val api = ApiClient(tokens)
+            val api = EvaconnectMcpClient(tokens)
             if (runCatching { tokens.get() != null }.getOrDefault(false).not()) {
                 updateNotification("Войдите в аккаунт Evolute")
                 stopSelf(startId)
