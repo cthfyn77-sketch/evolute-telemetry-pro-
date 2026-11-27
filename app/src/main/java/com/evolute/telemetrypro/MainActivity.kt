@@ -382,7 +382,7 @@ private fun TelemetryProApp(
                             MetricCard(
                                 "Сводка по подтверждённым поездкам",
                                 "${"%.1f".format(report.totalDistanceKm)} км",
-                                "${report.trips.size} поездок • в среднем ${"%.1f".format(report.averageDistanceKm)} км • максимум ${"%.1f".format(report.longestTripKm)} км • снижение SOC суммарно ${"%.1f".format(report.totalSocUsedPercent)} п.п."
+                                "${report.trips.size} поездок • в среднем ${"%.1f".format(report.averageDistanceKm)} км • максимум ${"%.1f".format(report.longestTripKm)} км • наблюдаемый интервал суммарно ${formatObservedDuration(report.totalObservedDurationMs)}, в среднем ${formatObservedDuration(report.averageObservedDurationMs)} • снижение SOC суммарно ${"%.1f".format(report.totalSocUsedPercent)} п.п."
                             )
                         }
                         report?.trips?.forEachIndexed { index, trip ->
@@ -390,6 +390,11 @@ private fun TelemetryProApp(
                                 .format(java.util.Date(trip.startedAtMs))
                             val end = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
                                 .format(java.util.Date(trip.endedAtMs))
+                            MetricCard(
+                                "Поездка ${report.trips.size - index}",
+                                "${"%.1f".format(trip.distanceKm)} км",
+                                "$start–$end • интервал наблюдения: ${formatObservedDuration(trip.observedDurationMs)} • SOC ${"%.1f".format(trip.startSocPercent)}% → ${"%.1f".format(trip.endSocPercent)}% • снижение ${"%.1f".format(trip.socUsedPercent)} п.п."
+                            )
                             val batteryComparison = tripBatteryReport?.comparisons?.firstOrNull {
                                 it.tripStartedAtMs == trip.startedAtMs && it.tripEndedAtMs == trip.endedAtMs
                             }
@@ -505,6 +510,19 @@ private fun TelemetryProApp(
             Text("Только чтение API • токены зашифрованы Android Keystore • данные хранятся локально", color = Muted, fontSize = 11.sp)
         }
     }
+}
+
+private fun formatObservedDuration(durationMs: Long): String {
+    val totalSeconds = durationMs.coerceAtLeast(0L) / 1_000L
+    if (totalSeconds < 60L) return "$totalSeconds сек"
+    val totalMinutes = totalSeconds / 60L
+    if (totalMinutes < 60L) return "$totalMinutes мин"
+    val hours = totalMinutes / 60L
+    val minutes = totalMinutes % 60L
+    if (hours < 24L) return if (minutes == 0L) "$hours ч" else "$hours ч $minutes мин"
+    val days = hours / 24L
+    val remainingHours = hours % 24L
+    return if (remainingHours == 0L) "$days д" else "$days д $remainingHours ч"
 }
 
 @Composable
