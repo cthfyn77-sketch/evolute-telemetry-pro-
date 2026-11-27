@@ -31,6 +31,7 @@ import com.evolute.telemetrypro.data.DrivingEfficiencyAnalyzer
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
+import com.evolute.telemetrypro.data.VehicleTimeZoneResolver
 import com.evolute.telemetrypro.data.TripBatteryComparisonAnalyzer
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.VehicleMovementState
@@ -89,11 +90,17 @@ class MainActivity : ComponentActivity() {
                         VehicleMovementState.analyze(db.vehicleMovementSamples()))
                 },
                 onTripHistory = {
-                    TripHistoryAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
+                    TripHistoryAnalyzer.analyze(
+                        SnapshotDb.get(this).tripHistorySamples(),
+                        zoneForCoordinates = VehicleTimeZoneResolver::zoneForCoordinates
+                    )
                 },
                 onTripBatteryComparison = {
                     val db = SnapshotDb.get(this)
-                    val trips = TripHistoryAnalyzer.analyze(db.tripHistorySamples()).trips
+                    val trips = TripHistoryAnalyzer.analyze(
+                        db.tripHistorySamples(),
+                        zoneForCoordinates = VehicleTimeZoneResolver::zoneForCoordinates
+                    ).trips
                     TripBatteryComparisonAnalyzer.analyze(trips, db.tripBatterySamples())
                 },
                 onChargingHistory = {
@@ -392,19 +399,20 @@ private fun TelemetryProApp(
                                 MetricCard(
                                     "Поездки • $dayLabel",
                                     "${day.tripCount} поездок • ${"%.1f".format(day.totalDistanceKm)} км",
-                                    "Группировка по дате начала поездки • наблюдаемый интервал: ${formatObservedDuration(day.totalObservedDurationMs)} • снижение SOC: ${"%.1f".format(day.totalSocUsedPercent)} п.п."
+                                    "Часовой пояс автомобиля: ${day.timeZoneId} • группировка по дате начала поездки • наблюдаемый интервал: ${formatObservedDuration(day.totalObservedDurationMs)} • снижение SOC: ${"%.1f".format(day.totalSocUsedPercent)} п.п."
                                 )
                             }
                         }
                         report?.trips?.forEachIndexed { index, trip ->
-                            val start = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
-                                .format(java.util.Date(trip.startedAtMs))
-                            val end = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                                .format(java.util.Date(trip.endedAtMs))
+                            val tripZone = java.time.ZoneId.of(trip.timeZoneId)
+                            val start = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+                                .withZone(tripZone).format(java.time.Instant.ofEpochMilli(trip.startedAtMs))
+                            val end = java.time.format.DateTimeFormatter.ofPattern("HH:mm", java.util.Locale.getDefault())
+                                .withZone(tripZone).format(java.time.Instant.ofEpochMilli(trip.endedAtMs))
                             MetricCard(
                                 "Поездка ${report.trips.size - index}",
                                 "${"%.1f".format(trip.distanceKm)} км",
-                                "$start–$end • интервал наблюдения: ${formatObservedDuration(trip.observedDurationMs)} • SOC ${"%.1f".format(trip.startSocPercent)}% → ${"%.1f".format(trip.endSocPercent)}% • снижение ${"%.1f".format(trip.socUsedPercent)} п.п."
+                                "$start–$end • ${trip.timeZoneId} • интервал наблюдения: ${formatObservedDuration(trip.observedDurationMs)} • SOC ${"%.1f".format(trip.startSocPercent)}% → ${"%.1f".format(trip.endSocPercent)}% • снижение ${"%.1f".format(trip.socUsedPercent)} п.п."
                             )
                             val batteryComparison = tripBatteryReport?.comparisons?.firstOrNull {
                                 it.tripStartedAtMs == trip.startedAtMs && it.tripEndedAtMs == trip.endedAtMs

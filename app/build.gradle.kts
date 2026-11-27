@@ -21,6 +21,10 @@ android {
 }
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("net.iakovlev:timeshape:2026b.29") {
+        exclude(group = "com.github.luben", module = "zstd-jni")
+    }
+    implementation("com.github.luben:zstd-jni:1.5.7-11@aar")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation(platform("androidx.compose:compose-bom:2025.03.00"))
     implementation("androidx.compose.ui:ui")

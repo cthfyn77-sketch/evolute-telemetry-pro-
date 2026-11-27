@@ -5,8 +5,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TripHistoryAnalyzerTest {
-    private fun sample(t: Long, odo: Double, soc: Double = 90.0, online: Boolean = true, charging: Boolean = false) =
-        TripHistorySample(t, odo, soc, online, charging)
+    private fun sample(t: Long, odo: Double, soc: Double = 90.0, online: Boolean = true, charging: Boolean = false,
+                        latitude: Double? = null, longitude: Double? = null) =
+        TripHistorySample(t, odo, soc, online, charging, latitude, longitude)
 
     @Test fun buildsTripFromObservedOdometerIncrements() {
         val report = TripHistoryAnalyzer.analyze(listOf(
@@ -155,6 +156,30 @@ class TripHistoryAnalyzerTest {
         assertEquals(2, report.dailySummaries[1].tripCount)
         assertEquals(0.5, report.dailySummaries[1].totalDistanceKm, 0.0001)
         assertEquals(60_000L, report.dailySummaries[1].totalObservedDurationMs)
+    }
+
+
+    @Test fun dailySummariesUseTheVehicleTimeZoneAtTripStart() {
+        val utc = java.time.ZoneId.of("UTC")
+        val paris = java.time.ZoneId.of("Europe/Paris")
+        val moscow = java.time.ZoneId.of("Europe/Moscow")
+        val instant = java.time.Instant.parse("2026-11-26T23:30:00Z").toEpochMilli()
+        val report = TripHistoryAnalyzer.analyze(listOf(
+            sample(instant, 10.0, latitude = 48.8566, longitude = 2.3522),
+            sample(instant + 30_000, 10.2, latitude = 48.8566, longitude = 2.3522),
+            sample(instant + 600_000, 20.0, latitude = 55.7558, longitude = 37.6173),
+            sample(instant + 630_000, 20.3, latitude = 55.7558, longitude = 37.6173)
+        ), nowMs = instant + 700_000, zoneId = utc, zoneForCoordinates = { lat, _ ->
+            if (lat > 50.0) moscow else paris
+        })
+
+        assertEquals("Europe/Moscow", report.trips[0].timeZoneId)
+        assertEquals("Europe/Paris", report.trips[1].timeZoneId)
+        assertEquals(2, report.dailySummaries.size)
+        assertEquals(java.time.LocalDate.of(2026, 11, 27), report.dailySummaries[0].date)
+        assertEquals("Europe/Moscow", report.dailySummaries[0].timeZoneId)
+        assertEquals(java.time.LocalDate.of(2026, 11, 27), report.dailySummaries[1].date)
+        assertEquals("Europe/Paris", report.dailySummaries[1].timeZoneId)
     }
 
     @Test fun emptyHistoryDoesNotInventTrips() {
