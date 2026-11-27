@@ -27,11 +27,21 @@ class CollectorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (pollJob?.isActive == true) return START_STICKY
         pollJob = scope.launch {
+            val hasSession = runCatching {
+                KeystoreTokenStore(this@CollectorService).get() != null
+            }.getOrDefault(false)
+            if (!hasSession) {
+                updateNotification("Требуется повторная авторизация")
+                stopSelf(startId)
+                return@launch
+            }
             val db = SnapshotDb.get(this@CollectorService)
             val estimator = RangeEstimator()
             db.recentSamples().forEach(estimator::add)
             val api = ApiClient(KeystoreTokenStore(this@CollectorService))
+            var consecutiveFailures = 0
             while (isActive) {
+                val nextDelayMs: Long
                 try {
                     val data = api.fetchTelemetry()
                     val charging = data.sensors["isChargingGunInserted"]?.let {
@@ -41,11 +51,15 @@ class CollectorService : Service() {
                     estimator.add(RangeEstimator.Sample(data.odometer, data.soc, System.currentTimeMillis(), charging))
                     val range = estimator.estimate(data.soc, data.stockRange)
                     val rangeText = range?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
+                    consecutiveFailures = 0
+                    nextDelayMs = CollectorRetryBackoff.delayAfterFailure(0)
                     updateNotification("SOC ${data.soc.toInt()}% • опрос каждые 30 с$rangeText")
                 } catch (e: Exception) {
-                    updateNotification("Нет свежих данных • ${e.message?.take(70) ?: "ошибка API"}")
+                    consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(30)
+                    nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
+                    updateNotification("Нет свежих данных • повтор через ${nextDelayMs / 1000} с • ${e.message?.take(45) ?: "ошибка API"}")
                 }
-                delay(30_000)
+                delay(nextDelayMs)
             }
         }
         return START_STICKY
