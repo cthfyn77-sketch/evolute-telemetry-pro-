@@ -72,9 +72,13 @@ object TripBatteryComparisonAnalyzer {
         return Report(comparisons)
     }
 
-    private fun sensor(raw: String, key: String): Double? = runCatching {
-        val value = JSONObject(raw).opt(key) ?: return null
-        if (value == JSONObject.NULL || value is Boolean) return null
-        value.toString().toDoubleOrNull()?.takeIf { it.isFinite() }
-    }.getOrNull()
+    private fun sensor(raw: String, key: String): Double? {
+        return try {
+            val json = JSONObject(raw)
+            if (!json.has(key) || json.isNull(key)) null
+            else json.optString(key).toDoubleOrNull()?.takeIf { it.isFinite() }
+        } catch (_: Exception) {
+            null
+        }
+    }
 }
