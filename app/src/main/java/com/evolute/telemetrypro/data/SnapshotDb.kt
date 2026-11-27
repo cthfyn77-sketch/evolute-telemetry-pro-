@@ -63,6 +63,13 @@ class SnapshotDb private constructor(context: Context) :
         }
     }
 
+    /** Wall-clock capture time of the newest locally persisted telemetry sample. */
+    fun latestCapturedAtMs(): Long? = readableDatabase.rawQuery(
+        "SELECT captured_ms FROM samples ORDER BY id DESC LIMIT 1", null
+    ).use { cursor ->
+        if (cursor.moveToFirst()) cursor.getLong(0) else null
+    }
+
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
     }
