@@ -41,6 +41,28 @@ class SnapshotDb private constructor(context: Context) :
         writableDatabase.insertOrThrow("samples", null, values)
     }
 
+    /** Chronological battery history for the selected period; raw sensor JSON is read unchanged. */
+    fun batteryHistory(capturedAfterMs: Long? = null): List<BatteryHistorySample> {
+        val sql = if (capturedAfterMs == null) {
+            "SELECT captured_at,soc,odometer,sensors_json FROM samples ORDER BY captured_ms ASC"
+        } else {
+            "SELECT captured_at,soc,odometer,sensors_json FROM samples WHERE captured_ms >= ? ORDER BY captured_ms ASC"
+        }
+        val args = capturedAfterMs?.let { arrayOf(it.toString()) }
+        return readableDatabase.rawQuery(sql, args).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(
+                    BatteryHistorySample(
+                        capturedAt = cursor.getString(0),
+                        soc = cursor.getDouble(1),
+                        odometer = cursor.getDouble(2),
+                        sensorsJson = cursor.getString(3)
+                    )
+                )
+            }
+        }
+    }
+
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
     }
