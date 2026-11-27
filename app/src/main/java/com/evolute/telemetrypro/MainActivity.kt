@@ -543,7 +543,7 @@ private fun TelemetryProApp(
             }
             Spacer(Modifier.height(12.dp))
             Text(status, color = Muted, fontSize = 12.sp)
-            Text("Только чтение через API Evolute • сессия зашифрована Android Keystore • снимки хранятся локально", color = Muted, fontSize = 11.sp)
+            Text("Встроенный EVACONNECT MCP • только чтение • сессия в Android Keystore • локальная SQLite", color = Muted, fontSize = 11.sp)
         }
     }
 }
