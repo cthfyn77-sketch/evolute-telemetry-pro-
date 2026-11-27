@@ -134,6 +134,29 @@ class TripHistoryAnalyzerTest {
         assertEquals(0.2, report.distanceSinceLastChargeKm!!, 0.0001)
     }
 
+    @Test fun groupsConfirmedTripsByLocalStartDateNewestFirst() {
+        val zone = java.time.ZoneId.of("Europe/Paris")
+        fun at(day: Int, hour: Int) = java.time.LocalDate.of(2026, 11, day)
+            .atTime(hour, 0).atZone(zone).toInstant().toEpochMilli()
+        val dayOne = at(26, 12)
+        val dayTwo = at(27, 13)
+        val report = TripHistoryAnalyzer.analyze(listOf(
+            sample(dayOne, 10.0, 90.0), sample(dayOne + 30_000, 10.2, 89.0),
+            sample(dayOne + 3_600_000, 11.0, 88.0), sample(dayOne + 3_630_000, 11.3, 87.0),
+            sample(dayTwo, 20.0, 85.0), sample(dayTwo + 30_000, 20.4, 84.0)
+        ), nowMs = dayTwo + 60_000, zoneId = zone)
+
+        assertEquals(2, report.dailySummaries.size)
+        assertEquals(java.time.LocalDate.of(2026, 11, 27), report.dailySummaries[0].date)
+        assertEquals(1, report.dailySummaries[0].tripCount)
+        assertEquals(0.4, report.dailySummaries[0].totalDistanceKm, 0.0001)
+        assertEquals(30_000L, report.dailySummaries[0].totalObservedDurationMs)
+        assertEquals(java.time.LocalDate.of(2026, 11, 26), report.dailySummaries[1].date)
+        assertEquals(2, report.dailySummaries[1].tripCount)
+        assertEquals(0.5, report.dailySummaries[1].totalDistanceKm, 0.0001)
+        assertEquals(60_000L, report.dailySummaries[1].totalObservedDurationMs)
+    }
+
     @Test fun emptyHistoryDoesNotInventTrips() {
         val report = TripHistoryAnalyzer.analyze(emptyList())
         assertTrue(report.trips.isEmpty())
