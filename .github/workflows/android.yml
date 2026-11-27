@@ -1,12 +1,18 @@
-name: Android APK
+name: Android verification
 on:
   push:
     branches: [ main, 'feature/**' ]
   workflow_dispatch:
+    inputs:
+      build_apk:
+        description: "Build debug APK (only when explicitly enabled)"
+        required: true
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,9 +23,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Build and test
-        run: gradle testDebugUnitTest assembleDebug
-      - name: Upload APK
+      - name: Run unit tests
+        run: gradle testDebugUnitTest
+      - name: Build debug APK (manual approval only)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        run: gradle assembleDebug
+      - name: Upload debug APK (manual approval only)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
         uses: actions/upload-artifact@v4
         with:
           name: evolute-telemetry-pro-debug
