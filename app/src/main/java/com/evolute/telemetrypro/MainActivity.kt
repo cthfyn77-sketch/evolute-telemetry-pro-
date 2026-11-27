@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
                     val rangeSamples = db.recentSamples()
                     rangeSamples.forEach(estimator::add)
                     val rangeSoc = if (latest?.online == true) latest.soc else rangeSamples.lastOrNull()?.socPercent
-                    val rangeFallback = latest?.stockRange?.takeIf { latest.online }
+                    val rangeFallback = latest?.takeIf { it.online }?.stockRange
                     val rangeEstimate = rangeSoc?.let { estimator.estimate(it, rangeFallback) }
                     RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs())
                 },
