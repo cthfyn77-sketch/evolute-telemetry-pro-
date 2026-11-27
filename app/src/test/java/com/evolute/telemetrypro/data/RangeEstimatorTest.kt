@@ -78,6 +78,20 @@ class RangeEstimatorTest {
         assertEquals(40.0, result.socPer100Km, 0.001)
     }
 
+    @Test fun recoversAfterLargeOdometerJumpFollowingTelemetryOutage() {
+        val estimator = RangeEstimator()
+        (0..8).forEach { km -> estimator.add(sample(100.0 - km * 0.5, km.toDouble(), km)) }
+        // The restored reading is more than 5 km ahead, but follows a long outage.
+        estimator.add(sample(90.0, 20.0, 20))
+        (1..8).forEach { km ->
+            estimator.add(sample(90.0 - km * 0.8, 20.0 + km, 20 + km))
+        }
+        val result = estimator.estimate(83.6, 180.0)!!
+        assertEquals(RangeEstimator.Source.MEASURED_1_KM, result.source)
+        assertEquals(104.5, result.rangeKm, 0.001)
+        assertEquals(80.0, result.socPer100Km, 0.001)
+    }
+
     @Test fun doesNotReusePreGapIntervalsUntilEightNewIntervalsExist() {
         val estimator = RangeEstimator()
         estimator.add(sample(100.0, 0.0, 0))
