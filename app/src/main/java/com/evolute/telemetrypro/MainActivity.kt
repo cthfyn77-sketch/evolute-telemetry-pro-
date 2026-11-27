@@ -118,7 +118,7 @@ private fun TelemetryProApp(
         }
     }
 
-    LaunchedEffect(session, tab, batteryPeriodMs) {
+    LaunchedEffect(session, tab, batteryPeriodMs, count) {
         if (session && tab == "Батарея") {
             batteryLoading = true
             try {
