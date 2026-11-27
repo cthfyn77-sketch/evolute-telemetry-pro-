@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.evolute.telemetrypro.data.ApiClient
+import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.RangeEstimator
@@ -61,6 +62,11 @@ class MainActivity : ComponentActivity() {
                     val estimator = RangeEstimator()
                     db.recentSamples().forEach(estimator::add)
                     Triple(latest, db.count(), latest?.let { estimator.estimate(it.soc, it.stockRange) })
+                },
+                onBatteryHistory = { periodMs ->
+                    val db = SnapshotDb.get(this)
+                    val cutoff = periodMs?.let { System.currentTimeMillis() - it }
+                    BatteryHistoryAnalyzer.analyze(db.batteryHistory(cutoff))
                 }
             )
         }
@@ -72,7 +78,8 @@ private fun TelemetryProApp(
     hasSession: Boolean,
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
-    onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
+    onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>,
+    onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
     var phone by remember { mutableStateOf("") }
@@ -88,6 +95,9 @@ private fun TelemetryProApp(
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
+    var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
+    var batteryReport by remember { mutableStateOf<BatteryHistoryAnalyzer.Report?>(null) }
+    var batteryLoading by remember { mutableStateOf(false) }
 
     fun refresh() {
         scope.launch {
@@ -105,6 +115,19 @@ private fun TelemetryProApp(
         if (session) {
             refresh()
             while (true) { kotlinx.coroutines.delay(5_000); refresh() }
+        }
+    }
+
+    LaunchedEffect(session, tab, batteryPeriodMs) {
+        if (session && tab == "Батарея") {
+            batteryLoading = true
+            try {
+                batteryReport = withContext(Dispatchers.IO) { onBatteryHistory(batteryPeriodMs) }
+            } catch (e: Exception) {
+                status = e.message ?: "Не удалось прочитать историю аккумулятора"
+            } finally {
+                batteryLoading = false
+            }
         }
     }
 
@@ -176,7 +199,12 @@ private fun TelemetryProApp(
                             MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
                         }
                     }
-                    "Батарея" -> MetricCard("Батарея", snapshot?.let { "SOC ${it.soc}%" } ?: "Нет данных", "Снимков сохранено: $count • графики в следующем этапе")
+                    "Батарея" -> BatteryHistoryPanel(
+                        report = batteryReport,
+                        periodMs = batteryPeriodMs,
+                        onPeriodChange = { batteryPeriodMs = it },
+                        loading = batteryLoading
+                    )
                     "Поездки" -> MetricCard("История поездок", "Подключается", "Следующий этап — чтение поездок и маршрутов API")
                     "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
                     else -> {
