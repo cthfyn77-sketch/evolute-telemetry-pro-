@@ -28,6 +28,7 @@ import com.evolute.telemetrypro.data.DrivingEfficiencyAnalyzer
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
+import com.evolute.telemetrypro.data.TripBatteryComparisonAnalyzer
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.VehicleMovementState
 import kotlinx.coroutines.Dispatchers
@@ -87,6 +88,11 @@ class MainActivity : ComponentActivity() {
                 onTripHistory = {
                     TripHistoryAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
                 },
+                onTripBatteryComparison = {
+                    val db = SnapshotDb.get(this)
+                    val trips = TripHistoryAnalyzer.analyze(db.tripHistorySamples()).trips
+                    TripBatteryComparisonAnalyzer.analyze(trips, db.tripBatterySamples())
+                },
                 onChargingHistory = {
                     ChargingSessionAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
                 },
@@ -121,6 +127,7 @@ private fun TelemetryProApp(
     onLogin: suspend (String, String) -> Unit,
     onRefresh: suspend () -> RefreshState,
     onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
+    onTripBatteryComparison: suspend () -> TripBatteryComparisonAnalyzer.Report,
     onChargingHistory: suspend () -> ChargingSessionAnalyzer.Report,
     onDrivingEfficiency: suspend () -> DrivingEfficiencyAnalyzer.Report,
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
@@ -146,6 +153,7 @@ private fun TelemetryProApp(
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
     var batteryReport by remember { mutableStateOf<BatteryHistoryAnalyzer.Report?>(null) }
     var tripReport by remember { mutableStateOf<TripHistoryAnalyzer.Report?>(null) }
+    var tripBatteryReport by remember { mutableStateOf<TripBatteryComparisonAnalyzer.Report?>(null) }
     var chargingReport by remember { mutableStateOf<ChargingSessionAnalyzer.Report?>(null) }
     var chargingLoading by remember { mutableStateOf(false) }
     var efficiencyReport by remember { mutableStateOf<DrivingEfficiencyAnalyzer.Report?>(null) }
@@ -198,6 +206,7 @@ private fun TelemetryProApp(
             tripLoading = true
             try {
                 tripReport = withContext(Dispatchers.IO) { onTripHistory() }
+                tripBatteryReport = withContext(Dispatchers.IO) { onTripBatteryComparison() }
             } catch (e: Exception) {
                 status = e.message ?: "Не удалось прочитать историю поездок"
             } finally {
@@ -384,7 +393,30 @@ private fun TelemetryProApp(
                                 "$start–$end • SOC ${"%.1f".format(trip.startSocPercent)}% → ${"%.1f".format(trip.endSocPercent)}% • расход ${"%.1f".format(trip.socUsedPercent)} п.п."
                             )
                         }
+                        val batteryComparison = tripBatteryReport?.comparisons?.firstOrNull()
+                        if (batteryComparison != null) {
+                            MetricCard("Аккумулятор: последняя подтверждённая поездка",
+                                "SOC ${"%.1f".format(batteryComparison.startSocPercent)}% → ${"%.1f".format(batteryComparison.endSocPercent)}%",
+                                "Изменение ${if (batteryComparison.socChangePercent >= 0) "+" else ""}${"%.1f".format(batteryComparison.socChangePercent)} п.п. • ${batteryComparison.sampleCount} снимков")
+                            val tempStart = batteryComparison.batteryTempStart
+                            val tempEnd = batteryComparison.batteryTempEnd
+                            if (tempStart != null && tempEnd != null) {
+                                MetricCard("Температура батареи",
+                                    "${"%.1f".format(tempStart)}°C → ${"%.1f".format(tempEnd)}°C",
+                                    "Изменение ${if (batteryComparison.batteryTempChange!! >= 0) "+" else ""}${"%.1f".format(batteryComparison.batteryTempChange)}°C за поездку")
+                            }
+                            val voltageStart = batteryComparison.auxiliaryVoltageStart
+                            val voltageEnd = batteryComparison.auxiliaryVoltageEnd
+                            if (voltageStart != null && voltageEnd != null) {
+                                MetricCard("Напряжение 12-вольтовой батареи",
+                                    "${"%.2f".format(voltageStart)} В → ${"%.2f".format(voltageEnd)} В",
+                                    "Изменение ${if (batteryComparison.auxiliaryVoltageChange!! >= 0) "+" else ""}${"%.2f".format(batteryComparison.auxiliaryVoltageChange)} В")
+                            }
+                        } else if (report?.trips?.isNotEmpty() == true) {
+                            MetricCard("Сравнение батареи", "Недостаточно данных", "Нужны минимум два достоверных онлайн-снимка в пределах поездки")
+                        }
                         if (report != null) {
+                            Text("Показываются только измеренные SOC, температура батареи и отдельное напряжение 12-вольтовой батареи. Это не оценка ёмкости или энергии в кВт·ч.", color = Muted, fontSize = 11.sp)
                             Text("Расстояние через разрывы телеметрии и скачки одометра не засчитывается. Маршрут и адреса не отображаются: подтверждённого API маршрутов пока нет.", color = Muted, fontSize = 11.sp)
                         }
                     }
