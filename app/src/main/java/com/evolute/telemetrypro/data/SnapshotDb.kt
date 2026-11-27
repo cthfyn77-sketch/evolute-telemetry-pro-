@@ -101,6 +101,22 @@ class SnapshotDb private constructor(context: Context) :
             }.asReversed()
         }
 
+    /** Full local snapshots for trip-level battery comparisons; raw sensor JSON is preserved. */
+    fun tripBatterySamples(limit: Int = 20_000): List<TripBatterySample> =
+        readableDatabase.rawQuery(
+            "SELECT captured_ms,soc,online,charging,sensors_json FROM samples ORDER BY captured_ms DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(TripBatterySample(
+                    capturedAtMs = cursor.getLong(0),
+                    socPercent = cursor.getDouble(1),
+                    online = cursor.getInt(2) == 1,
+                    charging = cursor.getInt(3) == 1,
+                    sensorsJson = cursor.getString(4)
+                ))
+            }.asReversed()
+        }
     /** Vehicle state samples: only online and API ready flag are used. */
     fun vehicleMovementSamples(limit: Int = 20_000): List<VehicleMovementState.Sample> =
         readableDatabase.rawQuery(
