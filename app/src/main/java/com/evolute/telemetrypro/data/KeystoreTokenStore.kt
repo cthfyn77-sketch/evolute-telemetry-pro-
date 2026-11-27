@@ -40,13 +40,15 @@ class KeystoreTokenStore(context: Context) : TokenStore {
             val json = JSONObject(String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), Charsets.UTF_8))
             EvaconnectMcpClient.Tokens(json.getString("access"), json.getString("refresh"),
                 json.optString("userId").takeIf { it.isNotBlank() }, json.optString("userToken").takeIf { it.isNotBlank() },
-                json.optString("widgetId").takeIf { it.isNotBlank() },\n                json.optString("carId").takeIf { it.isNotBlank() })
+                json.optString("widgetId").takeIf { it.isNotBlank() },
+                json.optString("carId").takeIf { it.isNotBlank() })
         } catch (e: Exception) { throw IOException("Не удалось прочитать защищённую сессию", e) }
     }
 
     @Synchronized override fun save(tokens: EvaconnectMcpClient.Tokens) {
         val json = JSONObject().put("access", tokens.access).put("refresh", tokens.refresh)
-            .put("userId", tokens.userId).put("userToken", tokens.userToken).put("widgetId", tokens.widgetId)\n            .put("carId", tokens.carId)
+            .put("userId", tokens.userId).put("userToken", tokens.userToken).put("widgetId", tokens.widgetId)
+            .put("carId", tokens.carId)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key(true))
         val data = Base64.encodeToString(cipher.doFinal(json.toString().toByteArray()), Base64.NO_WRAP)
