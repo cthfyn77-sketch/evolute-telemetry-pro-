@@ -23,6 +23,7 @@ class RangeEstimatorTest {
     @Test fun interpolatesSocAtWholeKilometreBoundaries() {
         val estimator = RangeEstimator()
         estimator.add(sample(100.0, 0.0, 0))
+        estimator.add(sample(98.4, 4.0, 1))
         estimator.add(sample(96.8, 8.0, 2))
         val result = estimator.estimate(96.8, 180.0)!!
         assertEquals(RangeEstimator.Source.MEASURED_1_KM, result.source)
@@ -73,7 +74,7 @@ class RangeEstimatorTest {
             estimator.add(sample(98.0 - km * 0.4, 4.5 + km, 10 + km))
         }
         val result = estimator.estimate(94.8, 180.0)!!
-        assertEquals(192.0, result.rangeKm, 0.001)
+        assertEquals(237.0, result.rangeKm, 0.001)
         assertEquals(40.0, result.socPer100Km, 0.001)
     }
 
