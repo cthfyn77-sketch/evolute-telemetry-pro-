@@ -130,5 +130,10 @@ class SnapshotDb private constructor(context: Context) :
         fun get(context: Context): SnapshotDb = instance ?: synchronized(this) {
             instance ?: SnapshotDb(context).also { instance = it }
         }
+
+        internal fun resetForTests() = synchronized(this) {
+            instance?.close()
+            instance = null
+        }
     }
 }
