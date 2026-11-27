@@ -21,6 +21,18 @@ class BatteryHistoryAnalyzerTest {
         assertEquals(79.0, report.metrics.single { it.path == "SOC" }.latest, 0.001)
     }
 
+    @Test fun readsExactTwelveVoltBatterySensorKeyFromApiSnapshot() {
+        val report = BatteryHistoryAnalyzer.analyze(listOf(
+            row(0, """{"12VBatteryVoltage":"12.4","batteryTemp":"21.5"}"""),
+            row(30, """{"12VBatteryVoltage":"12.7","batteryTemp":"22.0"}""")
+        ))
+        val voltage = report.metrics.single { it.path == "12VBatteryVoltage" }
+        assertEquals(12.7, voltage.latest, 0.001)
+        assertEquals(12.4, voltage.min, 0.001)
+        assertEquals(12.7, voltage.max, 0.001)
+        assertEquals(2, voltage.samples)
+    }
+
     @Test fun filtersOnlyAnIsolatedSpikeThatReturnsToBaseline() {
         val report = BatteryHistoryAnalyzer.analyze(listOf(
             row(0, """{"batteryVoltage":350}"""),
