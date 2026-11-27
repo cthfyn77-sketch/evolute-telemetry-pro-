@@ -100,7 +100,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             self.send_json(200, run_tool("evolute_status"))
-        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        except Exception as exc:
             self.send_json(502, {"error": "mcp_unavailable", "detail": str(exc)[:160]})
 
     def do_POST(self) -> None:
