@@ -28,6 +28,10 @@ class SnapshotDbPersistenceTest {
                         sensors = mapOf("12VBatteryVoltage" to (12.0 + km * 0.1).toString())
                     )
                 )
+                // SnapshotDb timestamps rows with the wall clock. Keep each
+                // synthetic sample distinct so RangeEstimator can replay them
+                // in strictly increasing capture-time order.
+                Thread.sleep(2)
             }
 
             assertEquals(9L, db.count())
