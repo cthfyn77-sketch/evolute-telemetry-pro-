@@ -7,7 +7,6 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.util.Locale
 
 /**
  * Native Kotlin port of the evaconnect 0.1.0 client + its six read-only MCP tools.
@@ -215,9 +214,9 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
                     Tokens(
                         access = access,
                         refresh = refresh,
-                        userId = json.optString("userId").ifBlank { current.userId.orEmpty() }.ifBlank { null },
-                        userToken = json.optString("userToken").ifBlank { current.userToken.orEmpty() }.ifBlank { null },
-                        widgetId = json.optString("widgetId").ifBlank { current.widgetId.orEmpty() }.ifBlank { null },
+                        userId = json.optString("userId").takeIf { it.isNotBlank() } ?: current.userId,
+                        userToken = json.optString("userToken").takeIf { it.isNotBlank() } ?: current.userToken,
+                        widgetId = json.optString("widgetId").takeIf { it.isNotBlank() } ?: current.widgetId,
                         carId = current.carId
                     )
                 )
@@ -456,12 +455,12 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
     }
 
     fun evoluteCharge(): JSONObject {
-        val response = execute("/charge-service/session/v2/current", access = tokens.get()?.access)
+        val current = tokens.get() ?: throw AuthenticationRequiredException("Требуется авторизация")
+        val response = execute("/charge-service/session/v2/current", access = current.access)
         if (response.code == 404 || response.body.isBlank() || response.body.trim() == "null" || response.body.trim() == "{}") {
             return JSONObject().put("session", JSONObject.NULL)
         }
         if (response.code == 401) {
-            val current = tokens.get() ?: throw AuthenticationRequiredException("Требуется авторизация")
             refresh(current)
             val retry = execute("/charge-service/session/v2/current", access = tokens.get()?.access)
             if (retry.code == 404 || retry.body.isBlank() || retry.body.trim() == "null" || retry.body.trim() == "{}") {
