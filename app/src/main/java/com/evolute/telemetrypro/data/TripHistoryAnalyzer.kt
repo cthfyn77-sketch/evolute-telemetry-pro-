@@ -109,7 +109,15 @@ object TripHistoryAnalyzer {
         val orderedTrips = trips.asReversed()
         val dayStartMs = java.time.LocalDate.ofInstant(java.time.Instant.ofEpochMilli(nowMs), zoneId)
             .atStartOfDay(zoneId).toInstant().toEpochMilli()
-        val distanceToday = orderedTrips.filter { it.startedAtMs >= dayStartMs && it.startedAtMs <= nowMs }.sumOf { it.distanceKm }
+        val distanceToday = samples.zipWithNext().sumOf { (previous, current) ->
+            val elapsed = current.capturedAtMs - previous.capturedAtMs
+            val delta = current.odometerKm - previous.odometerKm
+            if (current.capturedAtMs >= dayStartMs && current.capturedAtMs <= nowMs &&
+                previous.capturedAtMs >= dayStartMs && previous.online && current.online &&
+                !previous.charging && !current.charging &&
+                elapsed in 1..MAX_SAMPLE_GAP_MS && delta > 0.0 && delta <= MAX_PLAUSIBLE_INTERVAL_KM
+            ) delta else 0.0
+        }
         val lastChargeAtMs = samples.lastOrNull { it.charging }?.capturedAtMs
         val sinceLastCharge = lastChargeAtMs?.let { chargeAt ->
             orderedTrips.filter { it.startedAtMs >= chargeAt }.sumOf { it.distanceKm }
