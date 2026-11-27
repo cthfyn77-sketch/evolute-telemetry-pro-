@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
+                onSessionAvailable = { runCatching { tokenStore.get() != null }.getOrDefault(false) },
                 onRequestCode = { phone, country -> ApiClient(tokenStore).requestOtp(phone, country) },
                 onLogin = { phone, code ->
                     ApiClient(tokenStore).signIn(phone, code)
@@ -83,6 +84,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TelemetryProApp(
     hasSession: Boolean,
+    onSessionAvailable: () -> Boolean,
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
     onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>,
@@ -128,7 +130,16 @@ private fun TelemetryProApp(
     LaunchedEffect(session) {
         if (session) {
             refresh()
-            while (true) { kotlinx.coroutines.delay(5_000); refresh() }
+            while (true) {
+                kotlinx.coroutines.delay(5_000)
+                val available = withContext(Dispatchers.IO) { onSessionAvailable() }
+                if (!available) {
+                    session = false
+                    status = "Сессия истекла • войдите в аккаунт заново"
+                    break
+                }
+                refresh()
+            }
         }
     }
 
