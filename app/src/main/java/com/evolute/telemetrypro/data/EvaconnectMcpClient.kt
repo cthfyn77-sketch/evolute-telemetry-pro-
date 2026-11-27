@@ -73,7 +73,10 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
             requestMethod = method
             connectTimeout = 30_000
             readTimeout = 30_000
-            instanceFollowRedirects = true
+            // Keep POST auth requests on the exact endpoint: following redirects can
+            // silently rewrite the method/body or drop the custom access-token header.
+            instanceFollowRedirects = false
+            useCaches = false
             setRequestProperty("content-type", "application/json")
             setRequestProperty("accept", "application/json")
             setRequestProperty("cache-control", "no-cache")
