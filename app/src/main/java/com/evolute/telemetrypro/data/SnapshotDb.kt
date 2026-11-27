@@ -86,7 +86,7 @@ class SnapshotDb private constructor(context: Context) :
 
     fun recentSamples(limit: Int = 500): List<RangeEstimator.Sample> =
         readableDatabase.rawQuery(
-            "SELECT odometer,soc,captured_ms,charging FROM samples ORDER BY id DESC LIMIT ?",
+            "SELECT odometer,soc,captured_ms,charging FROM samples WHERE online = 1 ORDER BY id DESC LIMIT ?",
             arrayOf(limit.toString())
         ).use { c ->
             val result = ArrayList<RangeEstimator.Sample>()
