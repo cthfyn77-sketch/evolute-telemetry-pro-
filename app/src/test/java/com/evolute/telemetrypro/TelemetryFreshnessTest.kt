@@ -27,6 +27,20 @@ class TelemetryFreshnessTest {
     }
 
     @Test
+    fun apiStateTimestampIsDisplayedSeparatelyFromLocalCaptureFreshness() {
+        val now = 1_000_000L
+        val updatedAt = java.time.Instant.ofEpochMilli(now - 180_000L).toString()
+        assertEquals("Последнее обновление по API: 3 мин назад", TelemetryFreshness.apiStateLabel(updatedAt, now))
+        assertFalse(TelemetryFreshness.isStale(now - 5_000L, now))
+    }
+
+    @Test
+    fun missingOrUnrecognizedApiTimestampIsNotInvented() {
+        assertEquals("API не передал время обновления состояния", TelemetryFreshness.apiStateLabel(null, 1_000_000L))
+        assertEquals("Время API: not-a-date", TelemetryFreshness.apiStateLabel("not-a-date", 1_000_000L))
+    }
+
+    @Test
     fun futureCaptureTimeIsClampedToZeroAge() {
         assertFalse(TelemetryFreshness.isStale(1_000_001L, 1_000_000L))
         assertEquals("Последний снимок: 0 с назад", TelemetryFreshness.label(1_000_001L, 1_000_000L))
