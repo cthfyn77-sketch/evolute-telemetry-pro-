@@ -560,14 +560,21 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
 
     private fun numeric(value: Any?): Double? {
         if (value == null || value == JSONObject.NULL || value is Boolean) return null
+        if (value is JSONObject) {
+            for (key in listOf("value", "currentValue", "sensorValue")) {
+                if (value.has(key)) return numeric(value.opt(key))
+            }
+            return null
+        }
         val number = value.toString().toDoubleOrNull() ?: return null
         return number.takeIf { it.isFinite() && it >= 0.0 }
     }
 
     private fun coerceSensor(value: String): Any {
-        if (value.equals("true", true)) return true
-        if (value.equals("false", true)) return false
-        return value.toLongOrNull() ?: value.toDoubleOrNull() ?: value
+        val normalized = value.trim()
+        if (normalized.equals("true", true)) return true
+        if (normalized.equals("false", true)) return false
+        return normalized.toLongOrNull() ?: normalized.toDoubleOrNull() ?: value
     }
 
     private fun maskTail(value: String?, keep: Int): String? {
