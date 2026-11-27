@@ -51,6 +51,14 @@ class CollectorService : Service() {
         return START_STICKY
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        // Android 15+ limits background dataSync foreground services to
+        // six hours per 24-hour period. Stop cleanly; MainActivity restarts
+        // collection when the user returns to the app.
+        pollJob?.cancel()
+        stopSelf(startId)
+    }
+
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             getSystemService(NotificationManager::class.java)
