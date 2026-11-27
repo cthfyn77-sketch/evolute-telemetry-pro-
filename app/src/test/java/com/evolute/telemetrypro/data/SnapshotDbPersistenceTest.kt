@@ -10,6 +10,30 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class SnapshotDbPersistenceTest {
     @Test
+    fun offlineSnapshotsRemainInHistoryButAreExcludedFromRangeInputs() {
+        val context = RuntimeEnvironment.getApplication()
+        context.deleteDatabase("evolute_telemetry_pro.sqlite")
+        val db = SnapshotDb.get(context)
+        try {
+            db.insert(ApiClient.Telemetry(99.0, 1.0, 180.0, true, true, null, emptyMap()))
+            Thread.sleep(2)
+            db.insert(ApiClient.Telemetry(98.5, 2.0, 175.0, false, false, null, emptyMap()))
+            Thread.sleep(2)
+            db.insert(ApiClient.Telemetry(98.0, 3.0, 170.0, true, true, null, emptyMap()))
+
+            assertEquals(3L, db.count())
+            assertEquals(3, db.batteryHistory().size)
+            val rangeSamples = db.recentSamples()
+            assertEquals(2, rangeSamples.size)
+            assertEquals(1.0, rangeSamples.first().odometerKm, 0.001)
+            assertEquals(3.0, rangeSamples.last().odometerKm, 0.001)
+        } finally {
+            db.close()
+            context.deleteDatabase("evolute_telemetry_pro.sqlite")
+        }
+    }
+
+    @Test
     fun telemetryHistoryAndRangeEstimatorInputsSurviveDatabaseReopen() {
         val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("evolute_telemetry_pro.sqlite")
