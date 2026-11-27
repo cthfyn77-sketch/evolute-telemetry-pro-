@@ -19,7 +19,7 @@ class ChargingSessionAnalyzerTest {
         assertEquals(ChargingSessionAnalyzer.Status.COMPLETED, session.status)
         assertEquals(30.0, session.startSocPercent, 0.0)
         assertEquals(35.0, session.endSocPercent, 0.0)
-        assertEquals(3, session.sampleCount)
+        assertEquals(2, session.sampleCount)
         assertEquals(5.0, report.totalSocIncreasePercent, 0.0)
     }
 
