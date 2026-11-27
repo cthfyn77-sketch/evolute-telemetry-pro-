@@ -28,7 +28,7 @@ import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.ChargingSessionAnalyzer
 import com.evolute.telemetrypro.data.DrivingEfficiencyAnalyzer
-import com.evolute.telemetrypro.data.KeystoreTokenStore
+import com.evolute.telemetrypro.data.BridgeConfigStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
 import com.evolute.telemetrypro.data.TripBatteryComparisonAnalyzer
@@ -53,22 +53,21 @@ private data class RefreshState(
 )
 
 class MainActivity : ComponentActivity() {
-    private lateinit var tokenStore: KeystoreTokenStore
+    private lateinit var bridgeStore: BridgeConfigStore
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        tokenStore = KeystoreTokenStore(this)
+        bridgeStore = BridgeConfigStore(this)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        val existingSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
+        val existingSession = runCatching { bridgeStore.get() != null }.getOrDefault(false)
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
                 onSessionAvailable = { runCatching { tokenStore.get() != null }.getOrDefault(false) },
-                onRequestCode = { phone, country -> ApiClient(tokenStore).requestOtp(phone, country) },
-                onLogin = { phone, code ->
-                    ApiClient(tokenStore).signIn(phone, code)
+                onLogin = { token ->
+                    bridgeStore.save(token)
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
                 onRefresh = {
@@ -126,8 +125,7 @@ class MainActivity : ComponentActivity() {
 private fun TelemetryProApp(
     hasSession: Boolean,
     onSessionAvailable: () -> Boolean,
-    onRequestCode: suspend (String, String) -> Unit,
-    onLogin: suspend (String, String) -> Unit,
+    onLogin: suspend (String) -> Unit,
     onRefresh: suspend () -> RefreshState,
     onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
     onTripBatteryComparison: suspend () -> TripBatteryComparisonAnalyzer.Report,
@@ -136,13 +134,10 @@ private fun TelemetryProApp(
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
-    var phone by remember { mutableStateOf("") }
-    var country by remember { mutableStateOf("RU") }
-    var code by remember { mutableStateOf("") }
+    var bridgeToken by rememberSaveable { mutableStateOf("") }
     var session by remember { mutableStateOf(hasSession) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf(if (hasSession) "Сессия найдена" else "Войдите в аккаунт Evolute") }
-    var smsSent by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf(if (hasSession) "MCP bridge настроен" else "Подключите локальный MCP bridge") }
     var tab by remember { mutableStateOf("Главная") }
     var showAdditional by rememberSaveable { mutableStateOf(true) }
     var showTechnicalSensors by rememberSaveable { mutableStateOf(true) }
@@ -269,33 +264,24 @@ private fun TelemetryProApp(
             if (!session) {
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("Авторизация Evolute", color = Cyan, fontSize = 18.sp)
-                        OutlinedTextField(phone, { phone = it.filter(Char::isDigit).take(15) }, label = { Text("Телефон с кодом страны") }, singleLine = true)
-                        OutlinedTextField(country, { country = it.take(2).uppercase() }, label = { Text("Код страны") }, singleLine = true)
-                        Button(enabled = !busy, onClick = {
+                        Text("Подключение EVACONNECT MCP", color = Cyan, fontSize = 18.sp)
+                        Text("1. Запустите evaconnect-mcp bridge в Termux. 2. Скопируйте ключ из ~/.config/evolute/bridge-token.", color = Muted, fontSize = 12.sp)
+                        OutlinedTextField(
+                            bridgeToken, { bridgeToken = it.trim() },
+                            label = { Text("Ключ локального bridge") },
+                            singleLine = true
+                        )
+                        Button(enabled = !busy && bridgeToken.length >= 32, onClick = {
                             busy = true
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { onRequestCode(phone, country) }
-                                    smsSent = true; status = "SMS-код запрошен"
-                                } catch (e: Exception) { status = e.message ?: "Не удалось запросить код" }
+                                    withContext(Dispatchers.IO) { onLogin(bridgeToken) }
+                                    session = true
+                                    status = "Ключ сохранён в Android Keystore • сбор через MCP запущен"
+                                } catch (e: Exception) { status = e.message ?: "Не удалось сохранить ключ" }
                                 finally { busy = false }
                             }
-                        }) { Text(if (busy) "Подождите…" else "Запросить SMS-код") }
-                        if (smsSent) {
-                            OutlinedTextField(code, { code = it.filter(Char::isDigit).take(8) }, label = { Text("Код из SMS") }, singleLine = true)
-                            Button(enabled = !busy, onClick = {
-                                busy = true
-                                scope.launch {
-                                    try {
-                                        withContext(Dispatchers.IO) { onLogin(phone, code) }
-                                        session = true
-                                        status = "Авторизация успешна • сбор запущен автоматически"
-                                    } catch (e: Exception) { status = e.message ?: "Ошибка входа" }
-                                    finally { busy = false }
-                                }
-                            }) { Text("Войти и начать сбор") }
-                        }
+                        }) { Text(if (busy) "Подождите…" else "Подключить MCP и начать сбор") }
                     }
                 }
             } else {
