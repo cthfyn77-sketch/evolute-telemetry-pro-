@@ -10,6 +10,13 @@ data class TripBatterySample(
 )
 
 object TripBatteryComparisonAnalyzer {
+    data class Point(
+        val capturedAtMs: Long,
+        val socPercent: Double,
+        val batteryTempC: Double?,
+        val auxiliaryVoltageV: Double?
+    )
+
     data class Comparison(
         val tripStartedAtMs: Long,
         val tripEndedAtMs: Long,
@@ -19,7 +26,8 @@ object TripBatteryComparisonAnalyzer {
         val batteryTempEnd: Double?,
         val auxiliaryVoltageStart: Double?,
         val auxiliaryVoltageEnd: Double?,
-        val sampleCount: Int
+        val sampleCount: Int,
+        val points: List<Point>
     ) {
         val socChangePercent: Double get() = endSocPercent - startSocPercent
         val batteryTempChange: Double? get() =
@@ -64,7 +72,15 @@ object TripBatteryComparisonAnalyzer {
                 batteryTempEnd = sensor(last.sensorsJson, "batteryTemp"),
                 auxiliaryVoltageStart = sensor(first.sensorsJson, "12VBatteryVoltage"),
                 auxiliaryVoltageEnd = sensor(last.sensorsJson, "12VBatteryVoltage"),
-                sampleCount = duringTrip.size
+                sampleCount = duringTrip.size,
+                points = duringTrip.map { sample ->
+                    Point(
+                        capturedAtMs = sample.capturedAtMs,
+                        socPercent = sample.socPercent,
+                        batteryTempC = sensor(sample.sensorsJson, "batteryTemp"),
+                        auxiliaryVoltageV = sensor(sample.sensorsJson, "12VBatteryVoltage")
+                    )
+                }
             )
         }
         return Report(comparisons)

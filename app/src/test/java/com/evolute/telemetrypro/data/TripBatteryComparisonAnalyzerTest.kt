@@ -31,6 +31,11 @@ class TripBatteryComparisonAnalyzerTest {
         assertEquals(12.3, comparison.auxiliaryVoltageEnd!!, 0.0001)
         assertEquals(-0.5, comparison.auxiliaryVoltageChange!!, 0.0001)
         assertEquals(3, comparison.sampleCount)
+        assertEquals(3, comparison.points.size)
+        assertEquals(79.0, comparison.points[1].socPercent, 0.0001)
+        assertEquals(24.0, comparison.points[1].batteryTempC!!, 0.0001)
+        assertEquals(12.5, comparison.points[1].auxiliaryVoltageV!!, 0.0001)
+        assertEquals(31_000L, comparison.points[1].capturedAtMs)
     }
 
     @Test fun ignoresOfflineAndChargingSnapshots() {

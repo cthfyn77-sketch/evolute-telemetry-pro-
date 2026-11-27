@@ -387,33 +387,31 @@ private fun TelemetryProApp(
                                 .format(java.util.Date(trip.startedAtMs))
                             val end = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
                                 .format(java.util.Date(trip.endedAtMs))
-                            MetricCard(
-                                "Поездка ${report.trips.size - index}",
-                                "${"%.1f".format(trip.distanceKm)} км",
-                                "$start–$end • SOC ${"%.1f".format(trip.startSocPercent)}% → ${"%.1f".format(trip.endSocPercent)}% • расход ${"%.1f".format(trip.socUsedPercent)} п.п."
-                            )
-                        }
-                        val batteryComparison = tripBatteryReport?.comparisons?.firstOrNull()
-                        if (batteryComparison != null) {
-                            MetricCard("Аккумулятор: последняя подтверждённая поездка",
-                                "SOC ${"%.1f".format(batteryComparison.startSocPercent)}% → ${"%.1f".format(batteryComparison.endSocPercent)}%",
-                                "Изменение ${if (batteryComparison.socChangePercent >= 0) "+" else ""}${"%.1f".format(batteryComparison.socChangePercent)} п.п. • ${batteryComparison.sampleCount} снимков")
-                            val tempStart = batteryComparison.batteryTempStart
-                            val tempEnd = batteryComparison.batteryTempEnd
-                            if (tempStart != null && tempEnd != null) {
-                                MetricCard("Температура батареи",
-                                    "${"%.1f".format(tempStart)}°C → ${"%.1f".format(tempEnd)}°C",
-                                    "Изменение ${if (batteryComparison.batteryTempChange!! >= 0) "+" else ""}${"%.1f".format(batteryComparison.batteryTempChange)}°C за поездку")
+                            val batteryComparison = tripBatteryReport?.comparisons?.firstOrNull {
+                                it.tripStartedAtMs == trip.startedAtMs && it.tripEndedAtMs == trip.endedAtMs
                             }
-                            val voltageStart = batteryComparison.auxiliaryVoltageStart
-                            val voltageEnd = batteryComparison.auxiliaryVoltageEnd
-                            if (voltageStart != null && voltageEnd != null) {
-                                MetricCard("Напряжение 12-вольтовой батареи",
-                                    "${"%.2f".format(voltageStart)} В → ${"%.2f".format(voltageEnd)} В",
-                                    "Изменение ${if (batteryComparison.auxiliaryVoltageChange!! >= 0) "+" else ""}${"%.2f".format(batteryComparison.auxiliaryVoltageChange)} В")
+                            if (batteryComparison != null) {
+                                MetricCard(
+                                    "Показатели батареи • поездка ${report.trips.size - index}",
+                                    "SOC ${"%.1f".format(batteryComparison.startSocPercent)}% → ${"%.1f".format(batteryComparison.endSocPercent)}%",
+                                    "${batteryComparison.points.size} последовательных снимков • изменение SOC ${if (batteryComparison.socChangePercent >= 0) "+" else ""}${"%.1f".format(batteryComparison.socChangePercent)} п.п."
+                                )
+                                batteryComparison.points.forEach { point ->
+                                    val pointTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                                        .format(java.util.Date(point.capturedAtMs))
+                                    val tempText = point.batteryTempC?.let { "${"%.1f".format(it)}°C" } ?: "—"
+                                    val voltageText = point.auxiliaryVoltageV?.let { "${"%.2f".format(it)} В" } ?: "—"
+                                    MetricCard(
+                                        "Снимок $pointTime",
+                                        "SOC ${"%.1f".format(point.socPercent)}%",
+                                        "Температура тяговой батареи: $tempText • вспомогательная батарея 12 В: $voltageText"
+                                    )
+                                }
+                            } else {
+                                MetricCard("История батареи • поездка ${report.trips.size - index}",
+                                    "Недостаточно данных",
+                                    "Нужны минимум два последовательных онлайн-снимка без зарядки и разрывов более 90 секунд")
                             }
-                        } else if (report?.trips?.isNotEmpty() == true) {
-                            MetricCard("Сравнение батареи", "Недостаточно данных", "Нужны минимум два достоверных онлайн-снимка в пределах поездки")
                         }
                         if (report != null) {
                             Text("Показываются только измеренные SOC, температура батареи и отдельное напряжение 12-вольтовой батареи. Это не оценка ёмкости или энергии в кВт·ч.", color = Muted, fontSize = 11.sp)
