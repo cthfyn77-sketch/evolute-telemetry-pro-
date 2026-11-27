@@ -103,7 +103,7 @@ class TripHistoryAnalyzerTest {
     }
 
     @Test fun calculatesDistanceForCurrentLocalDay() {
-        val zone = java.time.ZoneId.of("Europe/Paris")
+        val zone = java.time.ZoneId.of("Europe/Moscow")
         val start = java.time.LocalDate.of(2026, 11, 27).atStartOfDay(zone).toInstant().toEpochMilli()
         val report = TripHistoryAnalyzer.analyze(listOf(
             sample(start - 120_000, 1.0), sample(start - 90_000, 1.2),
@@ -135,7 +135,7 @@ class TripHistoryAnalyzerTest {
     }
 
     @Test fun groupsConfirmedTripsByLocalStartDateNewestFirst() {
-        val zone = java.time.ZoneId.of("Europe/Paris")
+        val zone = java.time.ZoneId.of("Europe/Moscow")
         fun at(day: Int, hour: Int) = java.time.LocalDate.of(2026, 11, day)
             .atTime(hour, 0).atZone(zone).toInstant().toEpochMilli()
         val dayOne = at(26, 12)

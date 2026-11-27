@@ -388,8 +388,7 @@ private fun TelemetryProApp(
                         if (report != null && report.dailySummaries.isNotEmpty()) {
                             Text("Сводка по дням", color = Cyan, fontSize = 16.sp)
                             report.dailySummaries.take(7).forEach { day ->
-                                val dayLabel = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault())
-                                    .format(java.util.Date(day.date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()))
+                                val dayLabel = day.date.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy", java.util.Locale.getDefault()))
                                 MetricCard(
                                     "Поездки • $dayLabel",
                                     "${day.tripCount} поездок • ${"%.1f".format(day.totalDistanceKm)} км",

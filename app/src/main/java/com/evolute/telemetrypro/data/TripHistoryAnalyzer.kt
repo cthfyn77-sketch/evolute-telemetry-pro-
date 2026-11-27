@@ -60,7 +60,7 @@ object TripHistoryAnalyzer {
         }
     }
 
-    fun analyze(input: List<TripHistorySample>, nowMs: Long = System.currentTimeMillis(), zoneId: java.time.ZoneId = java.time.ZoneId.systemDefault()): Report {
+    fun analyze(input: List<TripHistorySample>, nowMs: Long = System.currentTimeMillis(), zoneId: java.time.ZoneId = java.time.ZoneId.of("Europe/Moscow")): Report {
         val samples = input.asSequence()
             .filter { it.capturedAtMs > 0 && it.odometerKm.isFinite() && it.odometerKm >= 0.0 &&
                 it.socPercent.isFinite() && it.socPercent in 0.0..100.0 }
