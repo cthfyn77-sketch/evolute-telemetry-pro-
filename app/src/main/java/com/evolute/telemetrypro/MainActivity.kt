@@ -35,6 +35,13 @@ private val Panel = Color(0xFF1B2933)
 private val Cyan = Color(0xFF28D7D0)
 private val Muted = Color(0xFF9FB0BA)
 
+private data class RefreshState(
+    val snapshot: ApiClient.Telemetry?,
+    val count: Long,
+    val estimate: RangeEstimator.Estimate?,
+    val capturedAtMs: Long?
+)
+
 class MainActivity : ComponentActivity() {
     private lateinit var tokenStore: KeystoreTokenStore
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -59,7 +66,7 @@ class MainActivity : ComponentActivity() {
                     val latest = db.latest()
                     val estimator = RangeEstimator()
                     db.recentSamples().forEach(estimator::add)
-                    Triple(latest, db.count(), latest?.let { estimator.estimate(it.soc, it.stockRange) })
+                    RefreshState(latest, db.count(), latest?.let { estimator.estimate(it.soc, it.stockRange) }, db.latestCapturedAtMs())
                 },
                 onBatteryHistory = { periodMs ->
                     val db = SnapshotDb.get(this)
@@ -87,7 +94,7 @@ private fun TelemetryProApp(
     onSessionAvailable: () -> Boolean,
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
-    onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>,
+    onRefresh: suspend () -> RefreshState,
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
@@ -103,6 +110,8 @@ private fun TelemetryProApp(
     var showTechnicalSensors by rememberSaveable { mutableStateOf(true) }
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
+    var capturedAtMs by remember { mutableStateOf<Long?>(null) }
+    var clockNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
     var batteryReport by remember { mutableStateOf<BatteryHistoryAnalyzer.Report?>(null) }
@@ -115,10 +124,12 @@ private fun TelemetryProApp(
         scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { onRefresh() }
-                snapshot = result.first
-                count = result.second
-                estimate = result.third
-                status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Данные обновлены локально"
+                snapshot = result.snapshot
+                count = result.count
+                estimate = result.estimate
+                capturedAtMs = result.capturedAtMs
+                clockNowMs = System.currentTimeMillis()
+                status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Локальная история обновлена"
             } catch (e: Exception) {
                 status = e.message ?: "Ошибка чтения данных"
             } finally {
@@ -132,6 +143,7 @@ private fun TelemetryProApp(
             refresh()
             while (true) {
                 kotlinx.coroutines.delay(5_000)
+                clockNowMs = System.currentTimeMillis()
                 val available = withContext(Dispatchers.IO) { onSessionAvailable() }
                 if (!available) {
                     session = false
@@ -204,6 +216,11 @@ private fun TelemetryProApp(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+                MetricCard(
+                    "Свежесть телеметрии",
+                    if (TelemetryFreshness.isStale(capturedAtMs, clockNowMs)) "Нет свежих данных" else "Данные поступают",
+                    TelemetryFreshness.label(capturedAtMs, clockNowMs)
+                )
                 when (tab) {
                     "Главная" -> {
                         MetricCard("Заряд батареи", snapshot?.let { "${it.soc.toInt()}%" } ?: "—", "Последний локальный снимок")
