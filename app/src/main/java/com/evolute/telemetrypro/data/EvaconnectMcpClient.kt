@@ -7,7 +7,6 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.util.Locale
 
 /**
  * Native Kotlin port of the evaconnect 0.1.0 client + its six read-only MCP tools.
