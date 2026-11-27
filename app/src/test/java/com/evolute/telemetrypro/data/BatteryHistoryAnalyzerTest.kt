@@ -9,7 +9,7 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class BatteryHistoryAnalyzerTest {
     private fun row(second: Int, json: String, soc: Double = 70.0) =
-        BatteryHistorySample("2026-11-27T12:00:${second.toString().padStart(2, '0')}Z", soc, 100.0, json)
+        BatteryHistorySample(java.time.Instant.parse("2026-11-27T12:00:00Z").plusSeconds(second.toLong()).toString(), soc, 100.0, json)
 
     @Test fun summarizesNestedBatteryMetricsAndSnapshotSoc() {
         val report = BatteryHistoryAnalyzer.analyze(listOf(
