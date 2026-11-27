@@ -83,16 +83,26 @@ object TripHistoryAnalyzer {
         var lastMovement: TripHistorySample? = null
         var distance = 0.0
         var activeZone: java.time.ZoneId? = null
+        var lastKnownZone = zoneId
         var excludedGaps = 0
         var ignoredJumps = 0
+
+        fun zoneAt(sample: TripHistorySample): java.time.ZoneId? {
+            val lat = sample.latitude ?: return null
+            val lon = sample.longitude ?: return null
+            if (!lat.isFinite() || lat !in -90.0..90.0 ||
+                !lon.isFinite() || lon !in -180.0..180.0) return null
+            return zoneForCoordinates(lat, lon)
+        }
 
         fun finish() {
             val first = start
             val last = lastMovement
             if (first != null && last != null && distance > 0.0) {
+                zoneAt(last)?.let { lastKnownZone = it }
                 trips += Trip(first.capturedAtMs, last.capturedAtMs, first.odometerKm,
                     last.odometerKm, distance, first.socPercent, last.socPercent,
-                    (activeZone ?: zoneId).id)
+                    (activeZone ?: lastKnownZone).id)
             }
             start = null
             lastMovement = null
@@ -124,15 +134,9 @@ object TripHistoryAnalyzer {
             if (delta > 0.0) {
                 if (start == null) {
                     start = previous
-                    activeZone = previous.latitude?.let { lat -> previous.longitude?.let { lon ->
-                        zoneForCoordinates(lat, lon)
-                    } }
+                    activeZone = zoneAt(previous) ?: lastKnownZone
                 }
-                if (activeZone == null) {
-                    activeZone = current.latitude?.let { lat -> current.longitude?.let { lon ->
-                        zoneForCoordinates(lat, lon)
-                    } }
-                }
+                if (activeZone == null) activeZone = zoneAt(current) ?: lastKnownZone
                 distance += delta
                 lastMovement = current
             } else {
@@ -144,9 +148,7 @@ object TripHistoryAnalyzer {
         }
         finish()
         val orderedTrips = trips.asReversed()
-        val currentZone = samples.lastOrNull()?.let { sample ->
-            sample.latitude?.let { lat -> sample.longitude?.let { lon -> zoneForCoordinates(lat, lon) } }
-        } ?: zoneId
+        val currentZone = samples.asReversed().firstNotNullOfOrNull(::zoneAt) ?: lastKnownZone
         val dayStartMs = java.time.LocalDate.ofInstant(java.time.Instant.ofEpochMilli(nowMs), currentZone)
             .atStartOfDay(currentZone).toInstant().toEpochMilli()
         val distanceToday = samples.zipWithNext().sumOf { (previous, current) ->
