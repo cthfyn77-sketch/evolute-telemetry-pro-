@@ -7,6 +7,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Locale
 
 /**
  * Native Kotlin port of the evaconnect 0.1.0 client + its six read-only MCP tools.
@@ -142,7 +143,7 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
             "POST",
             JSONObject()
                 .put("phone", phone)
-                .put("phoneCountry", phoneCountry)
+                .put("phoneCountry", phoneCountry.lowercase(Locale.ROOT))
                 .put("capchaToken", ""),
             auth = false
         )
@@ -396,11 +397,6 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
                 }
             })
             .put("warnings", telemetry.warnings.jsonOrNull())
-            .also {
-                // includePii is explicit, but the normal mobile snapshot deliberately
-                // excludes GPS from the persisted Telemetry model in all cases.
-                if (includePii) it.put("location_included", false)
-            }
     }
 
     fun evoluteVehicles(includePii: Boolean = false): JSONArray {
