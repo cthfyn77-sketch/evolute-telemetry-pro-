@@ -25,7 +25,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.evolute.telemetrypro.data.ApiClient
+import com.evolute.telemetrypro.data.EvaconnectMcpClient
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.ChargingSessionAnalyzer
 import com.evolute.telemetrypro.data.DrivingEfficiencyAnalyzer
@@ -45,7 +45,7 @@ private val Cyan = Color(0xFF28D7D0)
 private val Muted = Color(0xFF9FB0BA)
 
 private data class RefreshState(
-    val snapshot: ApiClient.Telemetry?,
+    val snapshot: EvaconnectMcpClient.Telemetry?,
     val count: Long,
     val estimate: RangeEstimator.Estimate?,
     val capturedAtMs: Long?,
@@ -55,12 +55,12 @@ private data class RefreshState(
 
 class MainActivity : ComponentActivity() {
     private lateinit var tokenStore: KeystoreTokenStore
-    private lateinit var apiClient: ApiClient
+    private lateinit var evaconnectMcpClient: EvaconnectMcpClient
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         tokenStore = KeystoreTokenStore(this)
-        apiClient = ApiClient(tokenStore)
+        evaconnectMcpClient = EvaconnectMcpClient(tokenStore)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -70,10 +70,10 @@ class MainActivity : ComponentActivity() {
                 hasSession = existingSession,
                 onSessionAvailable = { runCatching { tokenStore.get() != null }.getOrDefault(false) },
                 onRequestOtp = { phone, country ->
-                    withContext(Dispatchers.IO) { apiClient.requestOtp(phone.trim(), country.trim()) }
+                    withContext(Dispatchers.IO) { evaconnectMcpClient.requestOtp(phone.trim(), country.trim()) }
                 },
                 onLogin = { phone, code ->
-                    withContext(Dispatchers.IO) { apiClient.signIn(phone.trim(), code.trim()) }
+                    withContext(Dispatchers.IO) { evaconnectMcpClient.signIn(phone.trim(), code.trim()) }
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
                 onRefresh = {
@@ -150,7 +150,7 @@ private fun TelemetryProApp(
     var tab by remember { mutableStateOf("Главная") }
     var showAdditional by rememberSaveable { mutableStateOf(true) }
     var showTechnicalSensors by rememberSaveable { mutableStateOf(true) }
-    var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
+    var snapshot by remember { mutableStateOf<EvaconnectMcpClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
     var capturedAtMs by remember { mutableStateOf<Long?>(null) }
     var telemetryGaps by remember { mutableStateOf(TelemetryGapAnalyzer.Report.empty()) }
