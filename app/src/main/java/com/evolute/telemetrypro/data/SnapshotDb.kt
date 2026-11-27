@@ -34,7 +34,7 @@ class SnapshotDb private constructor(context: Context) :
             put("captured_ms", now)
             put("api_updated_at", t.updatedAt)
             put("soc", t.soc); put("odometer", t.odometer); put("stock_range", t.stockRange)
-            put("online", if (t.online) 1 else 0); put("ready", if (t.ready) 1 else 0)
+            put("online", if (t.online) 1 else 0); put("ready", t.ready?.let { if (it) 1 else 0 } ?: -1)
             put("charging", if (charging) 1 else 0)
             put("sensors_json", org.json.JSONObject(t.sensors).toString())
         }
@@ -127,7 +127,7 @@ class SnapshotDb private constructor(context: Context) :
                 while (cursor.moveToNext()) add(VehicleMovementState.Sample(
                     capturedAtMs = cursor.getLong(0),
                     online = cursor.getInt(1) == 1,
-                    ready = cursor.getInt(2) == 1
+                    ready = cursor.getInt(2).let { if (it < 0) null else it == 1 }
                 ))
             }
         }
@@ -143,7 +143,7 @@ class SnapshotDb private constructor(context: Context) :
         val sensorsObj = org.json.JSONObject(c.getString(6))
         val sensors = sensorsObj.keys().asSequence().associateWith { sensorsObj.optString(it) }
         ApiClient.Telemetry(c.getDouble(0), c.getDouble(1), if (c.isNull(2)) null else c.getDouble(2),
-            c.getInt(3) == 1, c.getInt(4) == 1, if (c.isNull(5)) null else c.getString(5), sensors)
+            c.getInt(3) == 1, c.getInt(4).let { if (it < 0) null else it == 1 }, if (c.isNull(5)) null else c.getString(5), sensors)
     }
 
     fun recentSamples(limit: Int = 500): List<RangeEstimator.Sample> =
