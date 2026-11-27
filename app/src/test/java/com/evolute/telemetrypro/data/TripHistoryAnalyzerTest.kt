@@ -88,6 +88,20 @@ class TripHistoryAnalyzerTest {
         assertEquals(0.5, report.longestTripKm, 0.0001)
     }
 
+    @Test fun summarizesObservedTripDurationsWithoutCallingThemDrivingTime() {
+        val report = TripHistoryAnalyzer.analyze(listOf(
+            sample(1_000, 10.0), sample(31_000, 10.2), sample(61_000, 10.5),
+            sample(300_000, 20.0), sample(330_000, 20.3)
+        ))
+        assertEquals(2, report.trips.size)
+        // Trips are displayed newest first.
+        assertEquals(30_000L, report.trips[0].observedDurationMs)
+        assertEquals(60_000L, report.trips[1].observedDurationMs)
+        assertEquals(90_000L, report.totalObservedDurationMs)
+        assertEquals(45_000L, report.averageObservedDurationMs)
+        assertEquals(60_000L, report.longestObservedDurationMs)
+    }
+
     @Test fun calculatesDistanceForCurrentLocalDay() {
         val zone = java.time.ZoneId.of("Europe/Paris")
         val start = java.time.LocalDate.of(2026, 11, 27).atStartOfDay(zone).toInstant().toEpochMilli()
