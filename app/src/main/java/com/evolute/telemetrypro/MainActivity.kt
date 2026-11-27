@@ -8,6 +8,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -18,6 +19,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -396,17 +399,35 @@ private fun TelemetryProApp(
                                     "SOC ${"%.1f".format(batteryComparison.startSocPercent)}% → ${"%.1f".format(batteryComparison.endSocPercent)}%",
                                     "${batteryComparison.points.size} последовательных снимков • изменение SOC ${if (batteryComparison.socChangePercent >= 0) "+" else ""}${"%.1f".format(batteryComparison.socChangePercent)} п.п."
                                 )
-                                batteryComparison.points.forEach { point ->
-                                    val pointTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                                        .format(java.util.Date(point.capturedAtMs))
-                                    val tempText = point.batteryTempC?.let { "${"%.1f".format(it)}°C" } ?: "—"
-                                    val voltageText = point.auxiliaryVoltageV?.let { "${"%.2f".format(it)} В" } ?: "—"
-                                    MetricCard(
-                                        "Снимок $pointTime",
-                                        "SOC ${"%.1f".format(point.socPercent)}%",
-                                        "Температура тяговой батареи: $tempText • вспомогательная батарея 12 В: $voltageText"
+                                BatteryTrendChart(
+                                    title = "Заряд SOC",
+                                    values = batteryComparison.points.map { it.socPercent },
+                                    unit = "%"
+                                )
+                                val measuredTemperatures = batteryComparison.points.map { it.batteryTempC }
+                                if (measuredTemperatures.any { it != null }) {
+                                    BatteryTrendChart(
+                                        title = "Температура тяговой батареи",
+                                        values = measuredTemperatures,
+                                        unit = "°C"
                                     )
+                                } else {
+                                    MetricCard("Температура тяговой батареи", "Нет измерений",
+                                        "Датчик не передал значения в этой поездке")
                                 }
+                                val voltageStart = batteryComparison.auxiliaryVoltageStart
+                                val voltageEnd = batteryComparison.auxiliaryVoltageEnd
+                                if (voltageStart != null && voltageEnd != null) {
+                                    MetricCard("Батарея 12 В",
+                                        "${"%.2f".format(voltageStart)} → ${"%.2f".format(voltageEnd)} В",
+                                        "Отдельный вспомогательный аккумулятор; промежуточные значения сохраняются в снимках")
+                                }
+                                val firstTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                                    .format(java.util.Date(batteryComparison.points.first().capturedAtMs))
+                                val lastTime = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                                    .format(java.util.Date(batteryComparison.points.last().capturedAtMs))
+                                Text("Время измерений: $firstTime — $lastTime • ${batteryComparison.points.size} снимков",
+                                    color = Muted, fontSize = 11.sp)
                             } else {
                                 MetricCard("История батареи • поездка ${report.trips.size - index}",
                                     "Недостаточно данных",
@@ -483,6 +504,64 @@ private fun MetricCard(title: String, value: String, detail: String) {
             Text(title, color = Muted)
             Text(value, color = Color.White, fontSize = 26.sp)
             Text(detail, color = Muted, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun BatteryTrendChart(title: String, values: List<Double?>, unit: String) {
+    val measured = values.filterNotNull().filter { it.isFinite() }
+    if (measured.isEmpty()) return
+    val minimum = measured.minOrNull() ?: return
+    val maximum = measured.maxOrNull() ?: return
+    val span = (maximum - minimum).takeIf { it > 0.000001 } ?: 1.0
+    val lower = minimum - span * 0.12
+    val upper = maximum + span * 0.12
+    Card(
+        Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Panel)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, color = Color.White)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("${"%.1f".format(maximum)} $unit", color = Muted, fontSize = 11.sp)
+                Text("${"%.1f".format(minimum)} $unit", color = Muted, fontSize = 11.sp)
+            }
+            Canvas(Modifier.fillMaxWidth().height(116.dp)) {
+                val left = 8f
+                val right = size.width - 8f
+                val top = 8f
+                val bottom = size.height - 8f
+                for (i in 0..3) {
+                    val y = top + (bottom - top) * i / 3f
+                    drawLine(Muted.copy(alpha = 0.22f), androidx.compose.ui.geometry.Offset(left, y),
+                        androidx.compose.ui.geometry.Offset(right, y), strokeWidth = 1f)
+                }
+                val path = Path()
+                var hasSegment = false
+                values.forEachIndexed { index, value ->
+                    if (value == null || !value.isFinite()) {
+                        hasSegment = false
+                    } else {
+                        val x = if (values.size <= 1) (left + right) / 2f
+                            else left + (right - left) * index / (values.size - 1).toFloat()
+                        val y = bottom - ((value - lower) / (upper - lower)).toFloat() * (bottom - top)
+                        if (!hasSegment) {
+                            path.moveTo(x, y)
+                            hasSegment = true
+                        } else {
+                            path.lineTo(x, y)
+                        }
+                        drawCircle(Cyan, radius = 3.5f, center = androidx.compose.ui.geometry.Offset(x, y))
+                    }
+                }
+                drawPath(path, Cyan, style = Stroke(width = 3f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Начало поездки", color = Muted, fontSize = 10.sp)
+                Text("Конец поездки", color = Muted, fontSize = 10.sp)
+            }
         }
     }
 }
