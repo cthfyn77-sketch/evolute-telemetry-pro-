@@ -25,7 +25,9 @@ import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
+import com.evolute.telemetrypro.data.TripHistoryAnalyzer
 import com.evolute.telemetrypro.data.RangeEstimator
+import com.evolute.telemetrypro.data.VehicleMovementState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -40,7 +42,8 @@ private data class RefreshState(
     val count: Long,
     val estimate: RangeEstimator.Estimate?,
     val capturedAtMs: Long?,
-    val telemetryGaps: TelemetryGapAnalyzer.Report
+    val telemetryGaps: TelemetryGapAnalyzer.Report,
+    val vehicleState: VehicleMovementState.State
 )
 
 class MainActivity : ComponentActivity() {
@@ -76,7 +79,11 @@ class MainActivity : ComponentActivity() {
                         db.captureTimesSince(nowMs - TelemetryGapAnalyzer.WINDOW_MS),
                         nowMs
                     )
-                    RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport)
+                    RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport,
+                        VehicleMovementState.analyze(db.vehicleMovementSamples()))
+                },
+                onTripHistory = {
+                    TripHistoryAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
                 },
                 onBatteryHistory = { periodMs ->
                     val db = SnapshotDb.get(this)
@@ -105,6 +112,7 @@ private fun TelemetryProApp(
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
     onRefresh: suspend () -> RefreshState,
+    onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
@@ -122,10 +130,13 @@ private fun TelemetryProApp(
     var count by remember { mutableLongStateOf(0L) }
     var capturedAtMs by remember { mutableStateOf<Long?>(null) }
     var telemetryGaps by remember { mutableStateOf(TelemetryGapAnalyzer.Report.empty()) }
+    var vehicleState by remember { mutableStateOf(VehicleMovementState.State.UNKNOWN) }
     var clockNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
     var batteryReport by remember { mutableStateOf<BatteryHistoryAnalyzer.Report?>(null) }
+    var tripReport by remember { mutableStateOf<TripHistoryAnalyzer.Report?>(null) }
+    var tripLoading by remember { mutableStateOf(false) }
     var batteryLoading by remember { mutableStateOf(false) }
     var refreshInFlight by remember { mutableStateOf(false) }
 
@@ -140,6 +151,7 @@ private fun TelemetryProApp(
                 estimate = result.estimate
                 capturedAtMs = result.capturedAtMs
                 telemetryGaps = result.telemetryGaps
+                vehicleState = result.vehicleState
                 clockNowMs = System.currentTimeMillis()
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Локальная история обновлена"
             } catch (e: Exception) {
@@ -163,6 +175,19 @@ private fun TelemetryProApp(
                     break
                 }
                 refresh()
+            }
+        }
+    }
+
+    LaunchedEffect(session, tab, count) {
+        if (session && tab == "Поездки") {
+            tripLoading = true
+            try {
+                tripReport = withContext(Dispatchers.IO) { onTripHistory() }
+            } catch (e: Exception) {
+                status = e.message ?: "Не удалось прочитать историю поездок"
+            } finally {
+                tripLoading = false
             }
         }
     }
@@ -260,7 +285,15 @@ private fun TelemetryProApp(
                             Text(if (showAdditional) "Скрыть дополнительные показания" else "Показать дополнительные показания")
                         }
                         if (showAdditional) {
-                            MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
+                            MetricCard(
+                                "Состояние автомобиля",
+                                if (TelemetryFreshness.isStale(capturedAtMs, clockNowMs)) "Нет свежих данных" else when (vehicleState) {
+                                    VehicleMovementState.State.IN_TRANSIT -> "В пути"
+                                    VehicleMovementState.State.NOT_READY -> "Не готов к движению"
+                                    VehicleMovementState.State.UNKNOWN -> "Нет данных"
+                                },
+                                "Состояние определяется только флагом ready из телеметрии"
+                            )
                         }
                     }
                     "Батарея" -> BatteryHistoryPanel(
@@ -269,7 +302,52 @@ private fun TelemetryProApp(
                         onPeriodChange = { batteryPeriodMs = it },
                         loading = batteryLoading
                     )
-                    "Поездки" -> MetricCard("История поездок", "Подключается", "Следующий этап — чтение поездок и маршрутов API")
+                    "Поездки" -> {
+                        val report = tripReport
+                        MetricCard(
+                            "История поездок",
+                            when {
+                                tripLoading -> "Загрузка…"
+                                report == null -> "Нет данных"
+                                else -> "${report.trips.size} поездок"
+                            },
+                            report?.let {
+                                "Локальная реконструкция по одометру • ${it.sampleCount} снимков • исключено разрывов: ${it.excludedGaps}, скачков одометра: ${it.ignoredOdometerJumps}"
+                            } ?: "Поездки определяются только по наблюдаемому изменению одометра"
+                        )
+                        if (report != null) {
+                            MetricCard("Поездка за день", "${"%.1f".format(report.distanceTodayKm)} км",
+                                "Сумма подтверждённых поездок с начала сегодняшнего дня")
+                            MetricCard("С последней зарядки",
+                                report.distanceSinceLastChargeKm?.let { "${"%.1f".format(it)} км" } ?: "Нет данных",
+                                if (report.distanceSinceLastChargeKm == null) "В локальной истории ещё не зафиксирован достоверный признак зарядки"
+                                else "Пробег по подтверждённым участкам после последнего снимка с зарядкой")
+                        }
+                        if (report != null && report.trips.isEmpty()) {
+                            MetricCard("Пока нет подтверждённых поездок", "—", "Нужны последовательные онлайн-снимки с увеличением одометра")
+                        }
+                        if (report != null && report.trips.isNotEmpty()) {
+                            MetricCard(
+                                "Сводка по подтверждённым поездкам",
+                                "${"%.1f".format(report.totalDistanceKm)} км",
+                                "${report.trips.size} поездок • в среднем ${"%.1f".format(report.averageDistanceKm)} км • максимум ${"%.1f".format(report.longestTripKm)} км • снижение SOC суммарно ${"%.1f".format(report.totalSocUsedPercent)} п.п."
+                            )
+                        }
+                        report?.trips?.forEachIndexed { index, trip ->
+                            val start = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+                                .format(java.util.Date(trip.startedAtMs))
+                            val end = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                .format(java.util.Date(trip.endedAtMs))
+                            MetricCard(
+                                "Поездка ${report.trips.size - index}",
+                                "${"%.1f".format(trip.distanceKm)} км",
+                                "$start–$end • SOC ${"%.1f".format(trip.startSocPercent)}% → ${"%.1f".format(trip.endSocPercent)}% • расход ${"%.1f".format(trip.socUsedPercent)} п.п."
+                            )
+                        }
+                        if (report != null) {
+                            Text("Расстояние через разрывы телеметрии и скачки одометра не засчитывается. Маршрут и адреса не отображаются: подтверждённого API маршрутов пока нет.", color = Muted, fontSize = 11.sp)
+                        }
+                    }
                     "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
                     else -> {
                         TextButton(onClick = { showTechnicalSensors = !showTechnicalSensors }) {

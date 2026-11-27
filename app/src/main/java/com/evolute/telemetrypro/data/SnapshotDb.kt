@@ -81,6 +81,41 @@ class SnapshotDb private constructor(context: Context) :
             }
         }
 
+
+    /** Raw locally captured points for conservative odometer-based trip reconstruction. */
+    fun tripHistorySamples(limit: Int = 20_000): List<TripHistorySample> =
+        readableDatabase.rawQuery(
+            "SELECT captured_ms,odometer,soc,online,charging FROM samples ORDER BY captured_ms DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(
+                    TripHistorySample(
+                        capturedAtMs = cursor.getLong(0),
+                        odometerKm = cursor.getDouble(1),
+                        socPercent = cursor.getDouble(2),
+                        online = cursor.getInt(3) == 1,
+                        charging = cursor.getInt(4) == 1
+                    )
+                )
+            }.asReversed()
+        }
+
+    /** Vehicle state samples: only online and API ready flag are used. */
+    fun vehicleMovementSamples(limit: Int = 20_000): List<VehicleMovementState.Sample> =
+        readableDatabase.rawQuery(
+            "SELECT captured_ms,online,ready FROM samples ORDER BY captured_ms DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(VehicleMovementState.Sample(
+                    capturedAtMs = cursor.getLong(0),
+                    online = cursor.getInt(1) == 1,
+                    ready = cursor.getInt(2) == 1
+                ))
+            }
+        }
+
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
     }
@@ -110,6 +145,11 @@ class SnapshotDb private constructor(context: Context) :
         @Volatile private var instance: SnapshotDb? = null
         fun get(context: Context): SnapshotDb = instance ?: synchronized(this) {
             instance ?: SnapshotDb(context).also { instance = it }
+        }
+
+        internal fun resetForTests() = synchronized(this) {
+            instance?.close()
+            instance = null
         }
     }
 }
