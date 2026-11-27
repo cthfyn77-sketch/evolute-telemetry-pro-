@@ -289,11 +289,10 @@ private fun TelemetryProApp(
                                 "Состояние автомобиля",
                                 if (TelemetryFreshness.isStale(capturedAtMs, clockNowMs)) "Нет свежих данных" else when (vehicleState) {
                                     VehicleMovementState.State.IN_TRANSIT -> "В пути"
-                                    VehicleMovementState.State.READY -> "Готов к движению"
                                     VehicleMovementState.State.NOT_READY -> "Не готов к движению"
                                     VehicleMovementState.State.UNKNOWN -> "Нет данных"
                                 },
-                                "После начала движения статус сохраняется при остановках до подтверждённой разблокировки дверей"
+                                "Состояние определяется только флагом ready из телеметрии"
                             )
                         }
                     }
