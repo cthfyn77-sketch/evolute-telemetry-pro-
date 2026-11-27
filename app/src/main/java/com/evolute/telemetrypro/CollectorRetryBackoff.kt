@@ -10,6 +10,9 @@ internal object CollectorRetryBackoff {
     private const val BASE_DELAY_MS = 30_000L
     private const val MAX_DELAY_MS = 5 * 60_000L
 
+    fun nextFailureCount(currentFailureCount: Int): Int =
+        (currentFailureCount.coerceAtLeast(0) + 1).coerceAtMost(30)
+
     fun delayAfterFailure(failureCount: Int): Long {
         if (failureCount <= 1) return BASE_DELAY_MS
         val exponent = (failureCount - 1).coerceAtMost(4)
