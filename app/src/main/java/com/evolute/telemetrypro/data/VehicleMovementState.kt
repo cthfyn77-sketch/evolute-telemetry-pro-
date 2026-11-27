@@ -9,7 +9,7 @@ object VehicleMovementState {
     data class Sample(
         val capturedAtMs: Long,
         val online: Boolean,
-        val ready: Boolean
+        val ready: Boolean?
     )
 
     enum class State { IN_TRANSIT, NOT_READY, UNKNOWN }
@@ -19,6 +19,6 @@ object VehicleMovementState {
             .filter { it.online }
             .maxByOrNull { it.capturedAtMs }
             ?: return State.UNKNOWN
-        return if (latest.ready) State.IN_TRANSIT else State.NOT_READY
+        return when (latest.ready) { true -> State.IN_TRANSIT; false -> State.NOT_READY; null -> State.UNKNOWN }
     }
 }
