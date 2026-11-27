@@ -2,6 +2,7 @@ package com.evolute.telemetrypro.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -27,6 +28,32 @@ class SnapshotDbPersistenceTest {
             assertEquals(2, rangeSamples.size)
             assertEquals(1.0, rangeSamples.first().odometerKm, 0.001)
             assertEquals(3.0, rangeSamples.last().odometerKm, 0.001)
+        } finally {
+            db.close()
+            context.deleteDatabase("evolute_telemetry_pro.sqlite")
+        }
+    }
+
+
+    @Test
+    fun tripHistorySamplesPreserveChronologyAndOfflineBreakMarkers() {
+        val context = RuntimeEnvironment.getApplication()
+        context.deleteDatabase("evolute_telemetry_pro.sqlite")
+        val db = SnapshotDb.get(context)
+        try {
+            db.insert(ApiClient.Telemetry(90.0, 10.0, null, true, true, null, emptyMap()))
+            Thread.sleep(2)
+            db.insert(ApiClient.Telemetry(89.0, 10.2, null, false, false, null, emptyMap()))
+            Thread.sleep(2)
+            db.insert(ApiClient.Telemetry(88.0, 10.2, null, true, true, null, emptyMap()))
+
+            val points = db.tripHistorySamples()
+            assertEquals(3, points.size)
+            assertEquals(10.0, points[0].odometerKm, 0.001)
+            assertEquals(true, points[0].online)
+            assertEquals(false, points[1].online)
+            assertEquals(10.2, points[2].odometerKm, 0.001)
+            assertTrue(points.zipWithNext().all { (a, b) -> b.capturedAtMs > a.capturedAtMs })
         } finally {
             db.close()
             context.deleteDatabase("evolute_telemetry_pro.sqlite")
