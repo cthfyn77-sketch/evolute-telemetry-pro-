@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import com.evolute.telemetrypro.data.ApiClient
+import com.evolute.telemetrypro.data.AuthenticationRequiredException
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.SnapshotDb
@@ -55,6 +56,11 @@ class CollectorService : Service() {
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(0)
                     updateNotification("SOC ${data.soc.toInt()}% • опрос каждые 30 с$rangeText")
                 } catch (e: Exception) {
+                    if (e is AuthenticationRequiredException) {
+                        updateNotification("Сессия истекла • войдите в аккаунт заново")
+                        stopSelf()
+                        return@launch
+                    }
                     consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(30)
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
                     updateNotification("Нет свежих данных • повтор через ${nextDelayMs / 1000} с • ${e.message?.take(45) ?: "ошибка API"}")
