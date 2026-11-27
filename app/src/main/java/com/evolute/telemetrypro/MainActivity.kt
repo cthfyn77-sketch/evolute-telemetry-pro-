@@ -65,8 +65,12 @@ class MainActivity : ComponentActivity() {
                     val db = SnapshotDb.get(this)
                     val latest = db.latest()
                     val estimator = RangeEstimator()
-                    db.recentSamples().forEach(estimator::add)
-                    RefreshState(latest, db.count(), latest?.let { estimator.estimate(it.soc, it.stockRange) }, db.latestCapturedAtMs())
+                    val rangeSamples = db.recentSamples()
+                    rangeSamples.forEach(estimator::add)
+                    val rangeSoc = if (latest?.online == true) latest.soc else rangeSamples.lastOrNull()?.socPercent
+                    val rangeFallback = latest?.stockRange?.takeIf { latest.online }
+                    val rangeEstimate = rangeSoc?.let { estimator.estimate(it, rangeFallback) }
+                    RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs())
                 },
                 onBatteryHistory = { periodMs ->
                     val db = SnapshotDb.get(this)
