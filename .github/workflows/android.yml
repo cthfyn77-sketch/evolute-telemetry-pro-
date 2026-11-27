@@ -1,7 +1,7 @@
 name: Android verification and signed release
 on:
   push:
-    branches: [ main, 'feature/**' ]
+    branches: [ main, 'feature/**', 'release/evolute-signed' ]
   workflow_dispatch:
     inputs:
       build_apk:
@@ -30,7 +30,7 @@ jobs:
         run: gradle --no-daemon testDebugUnitTest
 
       - name: Prepare permanent signing key
-        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        if: github.ref == 'refs/heads/release/evolute-signed' || (github.event_name == 'workflow_dispatch' && inputs.build_apk == true)
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
           SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
@@ -48,7 +48,7 @@ jobs:
           echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/evolute-signing/release.jks" >> "$GITHUB_ENV"
 
       - name: Build signed release APK
-        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        if: github.ref == 'refs/heads/release/evolute-signed' || (github.event_name == 'workflow_dispatch' && inputs.build_apk == true)
         env:
           SIGNING_KEYSTORE_PATH: ${{ runner.temp }}/evolute-signing/release.jks
           SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
@@ -57,7 +57,7 @@ jobs:
         run: gradle --no-daemon :app:assembleRelease
 
       - name: Verify permanent APK certificate
-        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        if: github.ref == 'refs/heads/release/evolute-signed' || (github.event_name == 'workflow_dispatch' && inputs.build_apk == true)
         shell: bash
         run: |
           set -euo pipefail
@@ -72,7 +72,7 @@ jobs:
           sha256sum "$APK"
 
       - name: Upload signed release APK
-        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        if: github.ref == 'refs/heads/release/evolute-signed' || (github.event_name == 'workflow_dispatch' && inputs.build_apk == true)
         uses: actions/upload-artifact@v4
         with:
           name: evolute-telemetry-pro-signed-release
