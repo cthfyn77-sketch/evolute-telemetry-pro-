@@ -79,7 +79,7 @@ class EvaconnectMcpClient(
             odometer = odo,
             stockRange = stockRange,
             online = online,
-            ready = false,
+            ready = null,
             updatedAt = updatedAt,
             sensors = sensors
         )
