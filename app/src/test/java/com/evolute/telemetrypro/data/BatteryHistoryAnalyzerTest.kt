@@ -27,7 +27,7 @@ class BatteryHistoryAnalyzerTest {
             row(30, """{"batteryVoltage":500}"""),
             row(60, """{"batteryVoltage":351}""")
         ))
-        val metric = report.metrics.single()
+        val metric = report.metrics.single { it.path == "batteryVoltage" }
         assertEquals(2, metric.samples)
         assertEquals(351.0, metric.max, 0.001)
         assertTrue(report.alerts.any { it.contains("одиночный скачок") })
