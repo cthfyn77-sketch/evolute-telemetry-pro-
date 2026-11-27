@@ -7,9 +7,10 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.AuthenticationRequiredException
-import com.evolute.telemetrypro.data.KeystoreTokenStore
+import com.evolute.telemetrypro.data.BridgeConfigStore
+import com.evolute.telemetrypro.data.EvaconnectMcpClient
+import com.evolute.telemetrypro.data.AuthenticationRequiredException
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.SnapshotDb
 import kotlinx.coroutines.*
@@ -29,17 +30,18 @@ class CollectorService : Service() {
         if (pollJob?.isActive == true) return START_STICKY
         pollJob = scope.launch {
             val hasSession = runCatching {
-                KeystoreTokenStore(this@CollectorService).get() != null
+                BridgeConfigStore(this@CollectorService).get() != null
             }.getOrDefault(false)
             if (!hasSession) {
-                updateNotification("Требуется повторная авторизация")
+                updateNotification("Настройте ключ локального MCP bridge")
                 stopSelf(startId)
                 return@launch
             }
             val db = SnapshotDb.get(this@CollectorService)
             val estimator = RangeEstimator()
             db.recentSamples().forEach(estimator::add)
-            val api = ApiClient(KeystoreTokenStore(this@CollectorService))
+            val bridgeToken = BridgeConfigStore(this@CollectorService).get() ?: throw AuthenticationRequiredException("Ключ MCP bridge не настроен")
+            val api = EvaconnectMcpClient("http://127.0.0.1:8765", bridgeToken)
             var consecutiveFailures = 0
             while (isActive) {
                 var nextDelayMs = 30_000L
@@ -61,13 +63,13 @@ class CollectorService : Service() {
                     }
                 } catch (e: Exception) {
                     if (e is AuthenticationRequiredException) {
-                        updateNotification("Сессия истекла • войдите в аккаунт заново")
+                        updateNotification("Ключ MCP bridge не принят • проверьте настройки")
                         stopSelf()
                         return@launch
                     }
                     consecutiveFailures = CollectorRetryBackoff.nextFailureCount(consecutiveFailures)
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
-                    updateNotification("Нет свежих данных • повтор через ${nextDelayMs / 1000} с • ${e.message?.take(45) ?: "ошибка API"}")
+                    updateNotification("Нет свежих данных • повтор через ${nextDelayMs / 1000} с • ${e.message?.take(45) ?: "ошибка MCP bridge"}")
                 }
                 delay(nextDelayMs)
             }
