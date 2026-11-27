@@ -143,7 +143,7 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
             "POST",
             JSONObject()
                 .put("phone", phone)
-                .put("phoneCountry", phoneCountry.lowercase(Locale.ROOT))
+                .put("phoneCountry", phoneCountry)
                 .put("capchaToken", ""),
             auth = false
         )
@@ -643,7 +643,7 @@ class EvaconnectMcpClient(private val tokens: TokenStore) {
     private fun pathSegment(value: String): String = URLEncoder.encode(value, "UTF-8")
 
     companion object {
-        internal val TERMINAL_REFRESH_CODES = setOf(400, 401, 403)
+        internal val TERMINAL_REFRESH_CODES = setOf(401)
         private const val MIN_TELEMETRY_INTERVAL_MS = 5_000L
         private val REFRESH_LOCK = Any()
         private val GEO_SENSOR_KEYS = setOf("lat", "lon", "course")
