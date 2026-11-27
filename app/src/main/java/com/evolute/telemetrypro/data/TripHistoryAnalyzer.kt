@@ -24,6 +24,8 @@ object TripHistoryAnalyzer {
         val endSocPercent: Double
     ) {
         val socUsedPercent: Double get() = (startSocPercent - endSocPercent).coerceAtLeast(0.0)
+        /** Observed timestamp span; may include short stationary pauses. */
+        val observedDurationMs: Long get() = (endedAtMs - startedAtMs).coerceAtLeast(0L)
     }
 
     data class Report(
@@ -39,6 +41,10 @@ object TripHistoryAnalyzer {
         val averageDistanceKm: Double get() =
             if (trips.isEmpty()) 0.0 else totalDistanceKm / trips.size
         val longestTripKm: Double get() = trips.maxOfOrNull { it.distanceKm } ?: 0.0
+        val totalObservedDurationMs: Long get() = trips.sumOf { it.observedDurationMs }
+        val averageObservedDurationMs: Long get() =
+            if (trips.isEmpty()) 0L else totalObservedDurationMs / trips.size
+        val longestObservedDurationMs: Long get() = trips.maxOfOrNull { it.observedDurationMs } ?: 0L
 
         companion object {
             fun empty() = Report(emptyList(), 0, 0, 0, 0.0, null)
