@@ -101,6 +101,32 @@ class SnapshotDb private constructor(context: Context) :
             }.asReversed()
         }
 
+    /** Chronological inputs for vehicle movement state; lock sensor remains nullable when absent. */
+    fun vehicleMovementSamples(limit: Int = 20_000): List<VehicleMovementState.Sample> =
+        readableDatabase.rawQuery(
+            "SELECT captured_ms,odometer,online,ready,sensors_json FROM samples ORDER BY captured_ms DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val sensors = org.json.JSONObject(cursor.getString(4))
+                    val lockValue = sensors.optString("isCentralLockingOn", "").lowercase()
+                    val locked = when (lockValue) {
+                        "true", "1", "on" -> true
+                        "false", "0", "off" -> false
+                        else -> null
+                    }
+                    add(VehicleMovementState.Sample(
+                        capturedAtMs = cursor.getLong(0),
+                        odometerKm = cursor.getDouble(1),
+                        online = cursor.getInt(2) == 1,
+                        ready = cursor.getInt(3) == 1,
+                        centralLockingOn = locked
+                    ))
+                }
+            }.asReversed()
+        }
+
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
     }
