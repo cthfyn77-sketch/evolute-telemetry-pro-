@@ -25,6 +25,7 @@ import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
+import com.evolute.telemetrypro.data.TripHistoryAnalyzer
 import com.evolute.telemetrypro.data.RangeEstimator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -78,6 +79,9 @@ class MainActivity : ComponentActivity() {
                     )
                     RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport)
                 },
+                onTripHistory = {
+                    TripHistoryAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
+                },
                 onBatteryHistory = { periodMs ->
                     val db = SnapshotDb.get(this)
                     val cutoff = periodMs?.let { System.currentTimeMillis() - it }
@@ -105,6 +109,7 @@ private fun TelemetryProApp(
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
     onRefresh: suspend () -> RefreshState,
+    onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
@@ -126,6 +131,8 @@ private fun TelemetryProApp(
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
     var batteryReport by remember { mutableStateOf<BatteryHistoryAnalyzer.Report?>(null) }
+    var tripReport by remember { mutableStateOf<TripHistoryAnalyzer.Report?>(null) }
+    var tripLoading by remember { mutableStateOf(false) }
     var batteryLoading by remember { mutableStateOf(false) }
     var refreshInFlight by remember { mutableStateOf(false) }
 
@@ -163,6 +170,19 @@ private fun TelemetryProApp(
                     break
                 }
                 refresh()
+            }
+        }
+    }
+
+    LaunchedEffect(session, tab, count) {
+        if (session && tab == "Поездки") {
+            tripLoading = true
+            try {
+                tripReport = withContext(Dispatchers.IO) { onTripHistory() }
+            } catch (e: Exception) {
+                status = e.message ?: "Не удалось прочитать историю поездок"
+            } finally {
+                tripLoading = false
             }
         }
     }
@@ -269,7 +289,37 @@ private fun TelemetryProApp(
                         onPeriodChange = { batteryPeriodMs = it },
                         loading = batteryLoading
                     )
-                    "Поездки" -> MetricCard("История поездок", "Подключается", "Следующий этап — чтение поездок и маршрутов API")
+                    "Поездки" -> {
+                        val report = tripReport
+                        MetricCard(
+                            "История поездок",
+                            when {
+                                tripLoading -> "Загрузка…"
+                                report == null -> "Нет данных"
+                                else -> "${report.trips.size} поездок"
+                            },
+                            report?.let {
+                                "Локальная реконструкция по одометру • ${it.sampleCount} снимков • исключено разрывов: ${it.excludedGaps}, скачков одометра: ${it.ignoredOdometerJumps}"
+                            } ?: "Поездки определяются только по наблюдаемому изменению одометра"
+                        )
+                        if (report != null && report.trips.isEmpty()) {
+                            MetricCard("Пока нет подтверждённых поездок", "—", "Нужны последовательные онлайн-снимки с увеличением одометра")
+                        }
+                        report?.trips?.forEachIndexed { index, trip ->
+                            val start = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+                                .format(java.util.Date(trip.startedAtMs))
+                            val end = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                .format(java.util.Date(trip.endedAtMs))
+                            MetricCard(
+                                "Поездка ${report.trips.size - index}",
+                                "${"%.1f".format(trip.distanceKm)} км",
+                                "$start–$end • SOC ${"%.1f".format(trip.startSocPercent)}% → ${"%.1f".format(trip.endSocPercent)}% • расход ${"%.1f".format(trip.socUsedPercent)} п.п."
+                            )
+                        }
+                        if (report != null) {
+                            Text("Расстояние через разрывы телеметрии и скачки одометра не засчитывается. Маршрут и адреса не отображаются: подтверждённого API маршрутов пока нет.", color = Muted, fontSize = 11.sp)
+                        }
+                    }
                     "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
                     else -> {
                         TextButton(onClick = { showTechnicalSensors = !showTechnicalSensors }) {
