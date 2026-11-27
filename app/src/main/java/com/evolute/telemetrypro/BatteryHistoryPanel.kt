@@ -94,7 +94,7 @@ private fun BatteryMetricGraph(points: List<BatteryHistoryAnalyzer.Point>) {
         points.forEachIndexed { index, point ->
             val x = left + ((point.at.toEpochMilli() - first) / timeSpan).toFloat() * (right - left)
             val y = bottom - ((point.value - minValue) / span).toFloat() * (bottom - top)
-            val gap = index > 0 && Duration.between(points[index - 1].at, point.at).toMinutes() > 10
+            val gap = index > 0 && Duration.between(points[index - 1].at, point.at).seconds > 600
             if (index == 0 || gap) path.moveTo(x, y) else path.lineTo(x, y)
         }
         drawPath(path, BatteryAccent, style = androidx.compose.ui.graphics.drawscope.Stroke(
