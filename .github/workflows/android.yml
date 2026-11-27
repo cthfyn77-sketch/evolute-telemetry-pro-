@@ -58,7 +58,6 @@ jobs:
 
       - name: Verify permanent APK certificate
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
-        env:
         shell: bash
         run: |
           set -euo pipefail
