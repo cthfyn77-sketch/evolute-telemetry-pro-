@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -269,7 +270,8 @@ private fun TelemetryProApp(
                         OutlinedTextField(
                             bridgeToken, { bridgeToken = it.trim() },
                             label = { Text("Ключ локального bridge") },
-                            singleLine = true
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation()
                         )
                         Button(enabled = !busy && bridgeToken.length >= 32, onClick = {
                             busy = true
@@ -504,7 +506,7 @@ private fun TelemetryProApp(
             }
             Spacer(Modifier.height(12.dp))
             Text(status, color = Muted, fontSize = 12.sp)
-            Text("Только чтение API • токены зашифрованы Android Keystore • данные хранятся локально", color = Muted, fontSize = 11.sp)
+            Text("Только чтение через EVACONNECT MCP • ключ bridge зашифрован Android Keystore • данные хранятся локально", color = Muted, fontSize = 11.sp)
         }
     }
 }
