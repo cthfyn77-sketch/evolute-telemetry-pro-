@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.chaquo.python")
 }
 android {
     namespace = "com.evolute.telemetrypro"
@@ -12,6 +13,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -19,6 +21,14 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 }
+chaquopy {
+    defaultConfig {
+        version = "3.12"
+        buildPython("python3.12")
+        pip { install("httpx==0.28.1") }
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.1")
