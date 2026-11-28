@@ -342,9 +342,24 @@ private fun TelemetryProApp(
                                 if (TelemetryFreshness.isStale(capturedAtMs, clockNowMs)) "Нет свежих данных" else when (vehicleState) {
                                     VehicleMovementState.State.IN_TRANSIT -> "В пути"
                                     VehicleMovementState.State.NOT_READY -> "Не готов к движению"
-                                    VehicleMovementState.State.UNKNOWN -> "Нет данных"
+                                    VehicleMovementState.State.UNKNOWN -> "Флаг ready недоступен"
                                 },
-                                "Состояние определяется только флагом ready из телеметрии"
+                                "MCP evolute_status сейчас не передаёт ready; другие сигналы его не заменяют"
+                            )
+                            MetricCard(
+                                "Связь с автомобилем",
+                                snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных",
+                                "Отдельный флаг online из MCP"
+                            )
+                            MetricCard(
+                                "Зажигание",
+                                telemetryFlagLabel(snapshot, "isIgnitionOn", "Включено", "Выключено"),
+                                "Отдельный сигнал ignition из MCP"
+                            )
+                            MetricCard(
+                                "Стоянка",
+                                telemetryFlagLabel(snapshot, "isParkedOn", "На стоянке", "Не на стоянке"),
+                                "Отдельный сигнал parked из MCP"
                             )
                         }
                     }
@@ -610,4 +625,15 @@ private fun BatteryTrendChart(title: String, values: List<Double?>, unit: String
             }
         }
     }
+}
+
+private fun telemetryFlagLabel(
+    snapshot: TelemetrySnapshot?,
+    key: String,
+    trueLabel: String,
+    falseLabel: String
+): String = when (snapshot?.sensors?.get(key)?.lowercase()) {
+    "true", "1" -> trueLabel
+    "false", "0" -> falseLabel
+    else -> "Нет данных"
 }
