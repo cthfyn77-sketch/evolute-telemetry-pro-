@@ -54,7 +54,15 @@ class CollectorService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action == "ENABLE_GPS") promoteForegroundForLocation()
+        if (intent?.action == "ENABLE_GPS") {
+            getSharedPreferences(GPS_PREFS, MODE_PRIVATE).edit().putBoolean(GPS_ENABLED, true).apply()
+            promoteForegroundForLocation()
+        }
+        if (intent?.action == "DISABLE_GPS") {
+            getSharedPreferences(GPS_PREFS, MODE_PRIVATE).edit().putBoolean(GPS_ENABLED, false).apply()
+            stopGpsUpdates()
+            demoteForegroundFromLocation()
+        }
         if (pollJob?.isActive == true) {
             syncGpsTracking(SnapshotDb.get(this))
             return START_STICKY
@@ -159,15 +167,16 @@ class CollectorService : Service() {
 
     private fun syncGpsTracking(db: SnapshotDb) {
         val trip = db.activeTrip()
-        val shouldTrack = trip != null && trip.status == "active" && hasLocationPermission()
+        val hasPermission = hasLocationPermission()
+        val gpsOptedIn = getSharedPreferences(GPS_PREFS, MODE_PRIVATE).getBoolean(GPS_ENABLED, false)
+        val shouldTrack = trip != null && trip.status == "active" && hasPermission
         if (!shouldTrack) {
             stopGpsUpdates()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && locationForegroundTypeEnabled) {
-                try {
-                    startForeground(NOTIFICATION_ID, notification("Сбор телеметрии • GPS ожидает активную поездку"),
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-                } catch (_: Exception) { }
-                locationForegroundTypeEnabled = false
+            // Keep the location FGS type while the user has explicitly enabled routes.
+            // This avoids upgrading a dataSync-only service to location after the app
+            // has moved to the background and Android's while-in-use checks may reject it.
+            if ((!gpsOptedIn || !hasPermission) && locationForegroundTypeEnabled) {
+                demoteForegroundFromLocation()
             }
             return
         }
@@ -204,9 +213,21 @@ class CollectorService : Service() {
         }
     }
 
+    private fun demoteForegroundFromLocation() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && locationForegroundTypeEnabled) {
+            try {
+                startForeground(NOTIFICATION_ID, notification("Сбор телеметрии • GPS выключен"),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } catch (_: Exception) { }
+            locationForegroundTypeEnabled = false
+        }
+    }
+
     private fun stopGpsUpdates() {
-        val listener = locationListener ?: return
-        try { locationManager?.removeUpdates(listener) } catch (_: SecurityException) { }
+        val listener = locationListener
+        if (listener != null) {
+            try { locationManager?.removeUpdates(listener) } catch (_: SecurityException) { }
+        }
         registeredLocationProviders.clear()
     }
 
@@ -244,5 +265,7 @@ class CollectorService : Service() {
     companion object {
         private const val CHANNEL = "evolute_telemetry_pro"
         private const val NOTIFICATION_ID = 821
+        private const val GPS_PREFS = "gps_route_settings"
+        private const val GPS_ENABLED = "enabled"
     }
 }
