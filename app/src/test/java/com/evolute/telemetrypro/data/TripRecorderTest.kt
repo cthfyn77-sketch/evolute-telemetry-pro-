@@ -84,6 +84,7 @@ class TripRecorderTest {
         // next consecutive snapshot beyond 500 m confirms the trip start.
         now = System.currentTimeMillis()
         lat = 55.75
+        val gpsBaselineAt = now
         db.insert(telemetry(ready = true), false)
         now += 30_000
         lat = 55.755
@@ -93,5 +94,6 @@ class TripRecorderTest {
         sample(ready = true)
         assertNotNull(db.activeTrip())
         assertEquals(100.3, db.activeTrip()?.startOdometer ?: -1.0, 0.001)
+        assertEquals(gpsBaselineAt, db.activeTrip()?.startedAtMs)
     }
 }
