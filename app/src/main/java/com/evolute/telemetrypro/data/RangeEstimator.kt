@@ -2,7 +2,6 @@ package com.evolute.telemetrypro.data
 
 import kotlin.math.abs
 import kotlin.math.ceil
-import kotlin.math.floor
 
 /**
  * Stores raw telemetry snapshots and interpolates SOC at each whole-kilometre
@@ -41,7 +40,9 @@ class RangeEstimator {
             if (start != null) {
                 val consumed = start.soc - end.soc
                 if (consumed > 0.0 && consumed <= 50.0) {
-                    val per100 = consumed * 10.0
+                    val rawPer100 = consumed * 10.0
+                    // Interpolation may produce 100.0000000000001 due to Double rounding.
+                    val per100 = if (rawPer100 <= 100.0 + 1e-9) rawPer100.coerceAtMost(100.0) else rawPer100
                     if (per100 in 0.1..100.0) {
                         return Estimate(remainingSocPercent / per100 * 100.0, per100, 10.0, Source.MEASURED_10_KM)
                     }
