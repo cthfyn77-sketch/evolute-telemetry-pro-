@@ -1,43 +1,27 @@
 # Evolute Telemetry Pro
 
-Отдельное Android-приложение для локального мониторинга Evolute i-JOY. Package ID: `com.evolute.telemetrypro`.
+Android-приложение для мониторинга Evolute i-JOY. Package ID: `com.evolute.telemetrypro`.
 
-## Источник телеметрии
+## Подключение к автомобилю — механизм build 152
 
-- Единственный источник телеметрии — настоящий `evaconnect-mcp` (stdio MCP server).
-- На телефоне MCP запускается через Termux; локальный адаптер `tools/evaconnect_mcp_bridge.py` предоставляет приложению узкий HTTP-интерфейс.
-- Android обращается только к `http://127.0.0.1:8765/v1/status` с заголовком `X-Bridge-Token`.
-- Bridge вызывает только MCP-инструмент `evolute_status`. Он не экспортирует команды управления автомобилем.
-- Прямой Android-клиент Evolute API, SMS-вход и refresh-token flow удалены из приложения.
-- Ключ bridge хранится в Android Keystore (AES-GCM); локальные снимки сохраняются в SQLite.
-- Опрос выполняется раз в 30 секунд. Снимок засчитывается только после успешной записи в SQLite.
-- MCP public status не предоставляет флаг `ready`; приложение сохраняет его как неизвестный, не подменяя значением false.
+Связь восстановлена на основе проверенной реализации из репозитория `evolute-telemetry-collector-`, commit `23c9e96248b673c655ee717eb86d2b5a7db3c92c` (build 152).
 
-## Запуск локального bridge в Termux
-
-1. Установите evaconnect и MCP-зависимости в том же Python 3.12+ окружении.
-2. Убедитесь, что штатная сессия evaconnect доступна через `~/.config/evolute/credentials.json`.
-3. Перейдите в корень репозитория приложения и запустите bridge из окружения evaconnect:
-
-   ```bash
-   cd ~/evolute-telemetry-pro
-   EVOLUTE_MCP_COMMAND="$HOME/evaconnect-termux/.venv/bin/evaconnect-mcp" \
-     "$HOME/evaconnect-termux/.venv/bin/python" tools/evaconnect_mcp_bridge.py
-   ```
-
-4. Bridge слушает только `127.0.0.1:8765`. Ключ создаётся в `~/.config/evolute/bridge-token` с правами файла 0600. Не публикуйте его и не меняйте адрес прослушивания на `0.0.0.0`.
-5. В приложении вставьте содержимое `~/.config/evolute/bridge-token`. Ключ будет сохранён в Android Keystore.
-6. Health-check: `GET http://127.0.0.1:8765/health`. Телеметрия: `GET /v1/status` с заголовком `X-Bridge-Token`.
-
-Bridge использует MCP stdio transport и вызывает MCP-инструмент `evolute_status`; GPS/PII не запрашиваются. Не опрашивайте MCP чаще одного раза в 5 секунд.
+- Вход в EVACONNECT выполняется непосредственно в приложении по номеру телефона и SMS-коду.
+- Регион SMS-запроса зафиксирован как `RU`; поле выбора региона отсутствует.
+- Авторизация и запросы к EVACONNECT выполняются встроенным Python-клиентом `evaconnect` через Chaquopy. Termux, локальный bridge и ручной bridge-token не требуются.
+- Используются те же EVACONNECT endpoints и порядок обмена, что и в build 152: `/id-service/info`, `/id-service/auth/sign-up`, `/id-service/auth/sign-in`, `/id-service/auth/refresh-token`, получение автомобиля и `/client-bff-service/telemetry/{imei}`.
+- Access/refresh token хранятся зашифрованно AES-GCM в Android Keystore.
+- При HTTP 401 клиент один раз обновляет токены; новая пара refresh/access сохраняется в Android Keystore.
+- После входа запускается foreground-сервис, который получает телеметрию раз в 30 секунд.
+- Полный декодированный ответ телеметрии сохраняется в SQLite; чувствительные токены и идентификаторы удаляются перед сохранением.
+- Приложение работает только на чтение; команды управления автомобилем не реализованы.
 
 ## Сохранение и аналитика
 
 - Снимки хранятся локально в SQLite.
-- Существующие графики, история поездок, зарядные сессии, анализ батареи и расчёт запаса хода работают по сохранённым снимкам.
-- Диагностика отдельно показывает успехи и ошибки MCP-сбора.
-- Приложение остаётся read-only.
+- Графики, история поездок, зарядные сессии, анализ батареи и расчёт запаса хода используют локальную историю снимков.
+- Время ответа EVACONNECT и время локального сохранения снимка учитываются отдельно.
 
 ## Проверки и сборка
 
-GitHub Actions запускает `gradle --no-daemon testDebugUnitTest`. Последняя проверка на коммите `570bb953` завершилась успешно. Smoke-проверка локального bridge в Termux также подтвердила доступность MCP, SOC и одометра. APK/release-сборки в рамках этой проверки не выполнялись; запускать их только после отдельного разрешения пользователя.
+Push в feature-ветку запускает Unit-тесты и сборку Debug APK. Release APK не собирается автоматически; для него требуется отдельный ручной запуск workflow.
