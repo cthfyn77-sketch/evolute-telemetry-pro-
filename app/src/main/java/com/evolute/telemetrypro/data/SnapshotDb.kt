@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.time.Instant
 
 class SnapshotDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 3) {
+    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE samples(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,17 +25,32 @@ class SnapshotDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX idx_samples_time ON samples(captured_ms)")
         db.execSQL("CREATE INDEX idx_samples_odo ON samples(odometer)")
         createTripsTable(db)
+        createChargingSessionsTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
             createTripsTable(db)
-        } else if (oldVersion < 3) {
+        }
+        if (oldVersion < 3) {
             db.execSQL("ALTER TABLE trips ADD COLUMN ready_off_since_ms INTEGER")
             db.execSQL("ALTER TABLE trips ADD COLUMN charging_unplugged_ms INTEGER")
             db.execSQL("ALTER TABLE trips ADD COLUMN gps_reference_lat REAL")
             db.execSQL("ALTER TABLE trips ADD COLUMN gps_reference_lon REAL")
         }
+        if (oldVersion < 4) createChargingSessionsTable(db)
+    }
+
+    private fun createChargingSessionsTable(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS charging_sessions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at_ms INTEGER NOT NULL,
+            ended_at_ms INTEGER,
+            start_soc REAL,
+            end_soc REAL
+        )""")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_charging_started ON charging_sessions(started_at_ms DESC)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_charging_active ON charging_sessions((1)) WHERE ended_at_ms IS NULL")
     }
 
     private fun createTripsTable(db: SQLiteDatabase) {
@@ -160,6 +175,7 @@ class SnapshotDb private constructor(context: Context) :
 
     @Synchronized fun insert(t: ApiClient.Telemetry, charging: Boolean = false) {
         val now = System.currentTimeMillis()
+        recordChargingBoundary(now, t.soc, charging)
         val values = ContentValues().apply {
             put("captured_at", Instant.ofEpochMilli(now).toString())
             put("captured_ms", now)
@@ -171,6 +187,43 @@ class SnapshotDb private constructor(context: Context) :
         }
         writableDatabase.insertOrThrow("samples", null, values)
     }
+
+
+    @Synchronized private fun recordChargingBoundary(at: Long, soc: Double, charging: Boolean) {
+        val activeId = readableDatabase.rawQuery(
+            "SELECT id FROM charging_sessions WHERE ended_at_ms IS NULL ORDER BY id DESC LIMIT 1", null
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+        if (charging && activeId == null) {
+            val values = ContentValues().apply {
+                put("started_at_ms", at)
+                if (soc.isFinite() && soc in 0.0..100.0) put("start_soc", soc) else putNull("start_soc")
+                putNull("ended_at_ms"); putNull("end_soc")
+            }
+            writableDatabase.insertOrThrow("charging_sessions", null, values)
+        } else if (!charging && activeId != null) {
+            val values = ContentValues().apply {
+                put("ended_at_ms", at)
+                if (soc.isFinite() && soc in 0.0..100.0) put("end_soc", soc) else putNull("end_soc")
+            }
+            writableDatabase.update("charging_sessions", values, "id=? AND ended_at_ms IS NULL", arrayOf(activeId.toString()))
+        }
+    }
+
+    fun recentChargingSessions(limit: Int = 50): List<ChargingSession> =
+        readableDatabase.rawQuery(
+            "SELECT id,started_at_ms,ended_at_ms,start_soc,end_soc FROM charging_sessions ORDER BY started_at_ms DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { c ->
+            val result = ArrayList<ChargingSession>()
+            while (c.moveToNext()) {
+                val started = c.getLong(1)
+                val ended = if (c.isNull(2)) null else c.getLong(2)
+                val startSoc = if (c.isNull(3)) null else c.getDouble(3)
+                val endSoc = if (c.isNull(4)) null else c.getDouble(4)
+                result.add(ChargingSession(c.getLong(0), started, ended, startSoc, endSoc))
+            }
+            result
+        }
 
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
