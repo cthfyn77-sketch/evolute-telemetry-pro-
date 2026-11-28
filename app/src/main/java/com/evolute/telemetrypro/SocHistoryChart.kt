@@ -2,7 +2,8 @@ package com.evolute.telemetrypro
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -53,7 +54,7 @@ internal fun SocHistoryChart(
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.End
         ) {
-            listOf("100", "75", "50", "25", "0").forEach {
+            listOf("100%", "75%", "50%", "25%", "0%").forEach {
                 Text(it, color = Color(0xFFB7C4CC), fontSize = 10.sp)
             }
         }
@@ -67,13 +68,25 @@ internal fun SocHistoryChart(
         Column(Modifier.weight(1f).fillMaxHeight()) {
             Canvas(
                 Modifier.weight(1f).fillMaxWidth().pointerInput(samples) {
-                    detectTapGestures { tap ->
-                        val index = samples.indices.minByOrNull { index ->
-                            val x = if (samples.size == 1) 0f else
-                                (samples[index].capturedAtMs - firstTime).toFloat() / span * size.width
-                            abs(x - tap.x)
-                        } ?: 0
-                        onSelect(index)
+                    fun indexAt(xPosition: Float): Int = samples.indices.minByOrNull { index ->
+                        val pointX = if (samples.size == 1) 0f else
+                            (samples[index].capturedAtMs - firstTime).toFloat() / span * size.width
+                        abs(pointX - xPosition)
+                    } ?: 0
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        onSelect(indexAt(down.position.x))
+                        var active = true
+                        while (active) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || !change.pressed) {
+                                active = false
+                            } else {
+                                onSelect(indexAt(change.position.x))
+                                change.consume()
+                            }
+                        }
                     }
                 }
             ) {
