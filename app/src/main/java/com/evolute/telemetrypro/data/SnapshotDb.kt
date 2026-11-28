@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.time.Instant
 
 class SnapshotDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 2) {
+    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE samples(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,8 +26,15 @@ class SnapshotDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX idx_samples_odo ON samples(odometer)")
         createTripsTable(db)
     }
+
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createTripsTable(db)
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE trips ADD COLUMN ready_off_since_ms INTEGER")
+            db.execSQL("ALTER TABLE trips ADD COLUMN charging_unplugged_ms INTEGER")
+            db.execSQL("ALTER TABLE trips ADD COLUMN gps_reference_lat REAL")
+            db.execSQL("ALTER TABLE trips ADD COLUMN gps_reference_lon REAL")
+        }
     }
 
     private fun createTripsTable(db: SQLiteDatabase) {
@@ -44,13 +51,19 @@ class SnapshotDb private constructor(context: Context) :
             end_lat REAL,
             end_lon REAL,
             last_movement_ms INTEGER NOT NULL,
-            status TEXT NOT NULL
+            status TEXT NOT NULL,
+            ready_off_since_ms INTEGER,
+            charging_unplugged_ms INTEGER,
+            gps_reference_lat REAL,
+            gps_reference_lon REAL
         )""")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_trips_started ON trips(started_at_ms DESC)")
     }
 
+    private val tripColumns = "id,started_at_ms,ended_at_ms,start_odometer,end_odometer,start_soc,end_soc,start_lat,start_lon,end_lat,end_lon,last_movement_ms,status,ready_off_since_ms,charging_unplugged_ms,gps_reference_lat,gps_reference_lon"
+
     @Synchronized fun activeTrip(): TripRecord? = readableDatabase.rawQuery(
-        "SELECT id,started_at_ms,ended_at_ms,start_odometer,end_odometer,start_soc,end_soc,start_lat,start_lon,end_lat,end_lon,last_movement_ms,status FROM trips WHERE ended_at_ms IS NULL ORDER BY id DESC LIMIT 1", null
+        "SELECT $tripColumns FROM trips WHERE ended_at_ms IS NULL ORDER BY id DESC LIMIT 1", null
     ).use { c -> if (c.moveToFirst()) tripFromCursor(c) else null }
 
     @Synchronized fun startTrip(at: Long, odometer: Double, soc: Double, lat: Double?, lon: Double?): Long {
@@ -62,15 +75,41 @@ class SnapshotDb private constructor(context: Context) :
             if (lon == null) putNull("start_lon") else put("start_lon", lon)
             putNull("end_lat"); putNull("end_lon")
             put("last_movement_ms", at); put("status", "active")
+            putNull("ready_off_since_ms"); putNull("charging_unplugged_ms")
+            if (lat == null) putNull("gps_reference_lat") else put("gps_reference_lat", lat)
+            if (lon == null) putNull("gps_reference_lon") else put("gps_reference_lon", lon)
         }
         return writableDatabase.insertOrThrow("trips", null, values)
     }
 
-    @Synchronized fun updateTrip(id: Long, odometer: Double, soc: Double, lat: Double?, lon: Double?, lastMovement: Long) {
+    @Synchronized fun updateTrip(
+        id: Long, odometer: Double, soc: Double, lat: Double?, lon: Double, lastMovement: Long
+    ) {
+        updateTripState(id, odometer, soc, lat, lon, lastMovement, "active", null, null, lat, lon)
+    }
+
+    @Synchronized fun updateTripState(
+        id: Long,
+        odometer: Double,
+        soc: Double,
+        lat: Double?,
+        lon: Double?,
+        lastMovement: Long,
+        status: String,
+        readyOffSinceMs: Long?,
+        chargingUnpluggedMs: Long?,
+        gpsReferenceLat: Double?,
+        gpsReferenceLon: Double?
+    ) {
         val values = ContentValues().apply {
             put("end_odometer", odometer); put("end_soc", soc); put("last_movement_ms", lastMovement)
+            put("status", status)
             if (lat == null) putNull("end_lat") else put("end_lat", lat)
             if (lon == null) putNull("end_lon") else put("end_lon", lon)
+            if (readyOffSinceMs == null) putNull("ready_off_since_ms") else put("ready_off_since_ms", readyOffSinceMs)
+            if (chargingUnpluggedMs == null) putNull("charging_unplugged_ms") else put("charging_unplugged_ms", chargingUnpluggedMs)
+            if (gpsReferenceLat == null) putNull("gps_reference_lat") else put("gps_reference_lat", gpsReferenceLat)
+            if (gpsReferenceLon == null) putNull("gps_reference_lon") else put("gps_reference_lon", gpsReferenceLon)
         }
         writableDatabase.update("trips", values, "id=? AND ended_at_ms IS NULL", arrayOf(id.toString()))
     }
@@ -81,7 +120,7 @@ class SnapshotDb private constructor(context: Context) :
     }
 
     fun recentTrips(limit: Int = 50): List<TripRecord> = readableDatabase.rawQuery(
-        "SELECT id,started_at_ms,ended_at_ms,start_odometer,end_odometer,start_soc,end_soc,start_lat,start_lon,end_lat,end_lon,last_movement_ms,status FROM trips ORDER BY started_at_ms DESC LIMIT ?",
+        "SELECT $tripColumns FROM trips ORDER BY started_at_ms DESC LIMIT ?",
         arrayOf(limit.toString())
     ).use { c ->
         val result = ArrayList<TripRecord>()
@@ -89,12 +128,33 @@ class SnapshotDb private constructor(context: Context) :
         result
     }
 
+    fun recentTripSamples(limit: Int = 25): List<TripSample> =
+        readableDatabase.rawQuery(
+            "SELECT captured_ms,soc,odometer,ready,charging,sensors_json FROM samples ORDER BY id DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { c ->
+            val result = ArrayList<TripSample>()
+            while (c.moveToNext()) {
+                val sensors = org.json.JSONObject(c.getString(5))
+                val lat = sensors.optString("lat").toDoubleOrNull()?.takeIf { it.isFinite() && it in -90.0..90.0 }
+                val lon = sensors.optString("lon").toDoubleOrNull()?.takeIf { it.isFinite() && it in -180.0..180.0 }
+                result.add(TripSample(c.getLong(0), c.getDouble(1), c.getDouble(2),
+                    c.getInt(3) == 1, c.getInt(4) == 1, lat, lon))
+            }
+            result.reverse()
+            result
+        }
+
     private fun tripFromCursor(c: android.database.Cursor) = TripRecord(
         id=c.getLong(0), startedAtMs=c.getLong(1), endedAtMs=if (c.isNull(2)) null else c.getLong(2),
         startOdometer=c.getDouble(3), endOdometer=c.getDouble(4), startSoc=c.getDouble(5), endSoc=c.getDouble(6),
         startLat=if (c.isNull(7)) null else c.getDouble(7), startLon=if (c.isNull(8)) null else c.getDouble(8),
         endLat=if (c.isNull(9)) null else c.getDouble(9), endLon=if (c.isNull(10)) null else c.getDouble(10),
-        lastMovementMs=c.getLong(11), status=c.getString(12)
+        lastMovementMs=c.getLong(11), status=c.getString(12),
+        readyOffSinceMs=if (c.isNull(13)) null else c.getLong(13),
+        chargingUnpluggedMs=if (c.isNull(14)) null else c.getLong(14),
+        gpsReferenceLat=if (c.isNull(15)) null else c.getDouble(15),
+        gpsReferenceLon=if (c.isNull(16)) null else c.getDouble(16)
     )
 
     @Synchronized fun insert(t: ApiClient.Telemetry, charging: Boolean = false) {
