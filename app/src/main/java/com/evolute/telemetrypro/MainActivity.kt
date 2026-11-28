@@ -29,7 +29,12 @@ import com.evolute.telemetrypro.data.TelemetrySnapshot
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.ChargingSessionAnalyzer
 import com.evolute.telemetrypro.data.DrivingEfficiencyAnalyzer
-import com.evolute.telemetrypro.data.BridgeConfigStore
+import com.evolute.telemetrypro.data.KeystoreTokenStore
+import com.evolute.telemetrypro.data.ApiClient
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
+import org.json.JSONObject
+import java.io.IOException
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
 import com.evolute.telemetrypro.data.TripBatteryComparisonAnalyzer
@@ -55,23 +60,50 @@ private data class RefreshState(
 )
 
 class MainActivity : ComponentActivity() {
-    private lateinit var bridgeStore: BridgeConfigStore
+    private lateinit var tokenStore: KeystoreTokenStore
+
+    private fun ensurePython() {
+        if (!Python.isStarted()) Python.start(AndroidPlatform(applicationContext))
+    }
+
+    private fun requestSms(phone: String) {
+        require(phone.length in 8..15) { "Введите телефон с кодом страны" }
+        ensurePython()
+        val raw = Python.getInstance().getModule("evaconnect_bridge")
+            .callAttr("request_otp", phone.trim(), "RU").toString()
+        val result = JSONObject(raw)
+        if (!result.optBoolean("ok", false)) throw IOException(result.optString("error", "Не удалось отправить SMS"))
+    }
+
+    private fun signIn(phone: String, code: String) {
+        ensurePython()
+        val raw = Python.getInstance().getModule("evaconnect_bridge")
+            .callAttr("sign_in", phone.trim(), code.trim()).toString()
+        val result = JSONObject(raw)
+        if (!result.optBoolean("ok", false)) throw IOException(result.optString("error", "Ошибка SMS-авторизации"))
+        val access = result.optString("access_token")
+        val refresh = result.optString("refresh_token")
+        if (access.isBlank() || refresh.isBlank()) throw IOException("EVACONNECT не вернул пару токенов")
+        tokenStore.save(ApiClient.Tokens(access, refresh,
+            result.optString("user_id").takeIf { it.isNotBlank() },
+            result.optString("user_token").takeIf { it.isNotBlank() },
+            result.optString("widget_id").takeIf { it.isNotBlank() }))
+        ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
+    }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        bridgeStore = BridgeConfigStore(this)
+        tokenStore = KeystoreTokenStore(this)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        val existingSession = runCatching { bridgeStore.get() != null }.getOrDefault(false)
+        val existingSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
-                onSessionAvailable = { runCatching { bridgeStore.get() != null }.getOrDefault(false) },
-                onLogin = { token ->
-                    bridgeStore.save(token.trim())
-                    ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
-                },
+                onSessionAvailable = { runCatching { tokenStore.get() != null }.getOrDefault(false) },
+                onRequestOtp = { phone -> withContext(Dispatchers.IO) { requestSms(phone) } },
+                onLogin = { phone, code -> withContext(Dispatchers.IO) { signIn(phone, code) } },
                 onRefresh = {
                     val db = SnapshotDb.get(this)
                     val latest = db.latest()
@@ -117,7 +149,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Returning to the foreground resets Android's dataSync FGS quota.
         // Restart collection if Android stopped it after the background limit.
-        val hasSession = runCatching { bridgeStore.get() != null }.getOrDefault(false)
+        val hasSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
         if (hasSession) {
             runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
         }
@@ -128,7 +160,8 @@ class MainActivity : ComponentActivity() {
 private fun TelemetryProApp(
     hasSession: Boolean,
     onSessionAvailable: () -> Boolean,
-    onLogin: suspend (String) -> Unit,
+    onRequestOtp: suspend (String) -> Unit,
+    onLogin: suspend (String, String) -> Unit,
     onRefresh: suspend () -> RefreshState,
     onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
     onTripBatteryComparison: suspend () -> TripBatteryComparisonAnalyzer.Report,
@@ -137,10 +170,11 @@ private fun TelemetryProApp(
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
-    var bridgeToken by remember { mutableStateOf("") }
+    var phone by rememberSaveable { mutableStateOf("") }
+    var smsCode by rememberSaveable { mutableStateOf("") }
     var session by remember { mutableStateOf(hasSession) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf(if (hasSession) "MCP bridge подключён" else "Подключите локальный evaconnect-mcp bridge") }
+    var status by remember { mutableStateOf(if (hasSession) "Авторизация EVACONNECT сохранена" else "Войдите по SMS для подключения автомобиля") }
     var tab by remember { mutableStateOf("Главная") }
     var showAdditional by rememberSaveable { mutableStateOf(true) }
     var showTechnicalSensors by rememberSaveable { mutableStateOf(true) }
@@ -196,7 +230,7 @@ private fun TelemetryProApp(
                 val available = withContext(Dispatchers.IO) { onSessionAvailable() }
                 if (!available) {
                     session = false
-                    status = "Ключ MCP bridge недоступен • подключите bridge заново"
+                    status = "Сессия EVACONNECT недоступна • выполните вход по SMS"
                     break
                 }
                 refresh()
@@ -269,32 +303,51 @@ private fun TelemetryProApp(
             if (!session) {
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Подключение EVACONNECT MCP", color = Cyan, fontSize = 18.sp)
+                        Text("Авторизация EVACONNECT по SMS", color = Cyan, fontSize = 18.sp)
                         Text(
-                            "Запустите evaconnect-mcp bridge в Termux на этом телефоне. Затем вставьте ключ из ~/.config/evolute/bridge-token. Приложение обращается только к локальному MCP bridge.",
+                            "Введите номер телефона с кодом страны. Регион авторизации зафиксирован: RU. После входа приложение само подключится к автомобилю и начнёт обновлять телеметрию.",
                             color = Muted, fontSize = 12.sp
                         )
                         OutlinedTextField(
-                            bridgeToken, { bridgeToken = it.trim() },
-                            label = { Text("Ключ локального MCP bridge") },
+                            phone, { phone = it.filter { ch -> ch.isDigit() || ch == '+' }.take(16) },
+                            label = { Text("Телефон с кодом страны (только RU)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(enabled = !busy && phone.filter(Char::isDigit).length in 8..15, onClick = {
+                            busy = true
+                            status = "Запрашиваем SMS-код EVACONNECT…"
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { onRequestOtp(phone) }
+                                    status = "SMS-код отправлен. Введите его ниже."
+                                } catch (e: Exception) { status = e.message ?: "Не удалось запросить SMS-код" }
+                                finally { busy = false }
+                            }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (busy) "Подождите…" else "Запросить SMS-код")
+                        }
+                        OutlinedTextField(
+                            smsCode, { smsCode = it.filter(Char::isDigit).take(8) },
+                            label = { Text("Код из SMS") },
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation(),
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Button(enabled = !busy && bridgeToken.length >= 32, onClick = {
+                        Button(enabled = !busy && phone.filter(Char::isDigit).length in 8..15 && smsCode.length >= 4, onClick = {
                             busy = true
-                            status = "Подключаем MCP bridge…"
+                            status = "Проверяем SMS-код…"
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { onLogin(bridgeToken) }
+                                    withContext(Dispatchers.IO) { onLogin(phone, smsCode) }
                                     session = true
-                                    bridgeToken = ""
-                                    status = "Ключ сохранён в Android Keystore • сбор через MCP запущен"
-                                } catch (e: Exception) { status = e.message ?: "Не удалось подключить MCP bridge" }
+                                    smsCode = ""
+                                    status = "Вход выполнен • подключение к автомобилю запущено"
+                                } catch (e: Exception) { status = e.message ?: "Не удалось войти в EVACONNECT" }
                                 finally { busy = false }
                             }
                         }, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (busy) "Подождите…" else "Подключить MCP и начать сбор")
+                            Text(if (busy) "Подождите…" else "Войти и подключить автомобиль")
                         }
                     }
                 }
