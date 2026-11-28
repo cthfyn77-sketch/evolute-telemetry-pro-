@@ -7,14 +7,14 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.AuthenticationRequiredException
-import com.evolute.telemetrypro.data.KeystoreTokenStore
+import com.evolute.telemetrypro.data.BridgeConfigStore
+import com.evolute.telemetrypro.data.EvaconnectMcpClient
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.SnapshotDb
 import kotlinx.coroutines.*
 
-/** Collects read-only vehicle telemetry directly from the Evolute API on this device. */
+/** Collects read-only snapshots exclusively through the local evaconnect-mcp bridge. */
 class CollectorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
@@ -24,17 +24,21 @@ class CollectorService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, notification("Подготовка авторизации Evolute"))
+        startForeground(NOTIFICATION_ID, notification("Подключение к EVACONNECT MCP"))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (pollJob?.isActive == true) return START_STICKY
         pollJob = scope.launch {
-            val tokens = KeystoreTokenStore(this@CollectorService)
-            val api = ApiClient(tokens)
-            if (runCatching { tokens.get() != null }.getOrDefault(false).not()) {
-                CollectionDiagnostics.record(this@CollectorService, "Нет сохранённой сессии")
-                updateNotification("Войдите в аккаунт Evolute")
+            val bridgeToken = try {
+                BridgeConfigStore(this@CollectorService).get()
+            } catch (e: Exception) {
+                CollectionDiagnostics.record(this@CollectorService, e.message ?: "Ключ MCP bridge недоступен", false)
+                null
+            }
+            if (bridgeToken.isNullOrBlank()) {
+                CollectionDiagnostics.record(this@CollectorService, "MCP bridge не настроен", false)
+                updateNotification("Настройте ключ локального MCP bridge")
                 stopSelf(startId)
                 return@launch
             }
@@ -42,43 +46,44 @@ class CollectorService : Service() {
             val db = SnapshotDb.get(this@CollectorService)
             val estimator = RangeEstimator()
             db.recentSamples().forEach(estimator::add)
+            val mcp = EvaconnectMcpClient("http://127.0.0.1:8765", bridgeToken)
             var consecutiveFailures = 0
 
             while (isActive) {
                 var nextDelayMs = 30_000L
                 try {
-                    val data = api.fetchTelemetry()
+                    val data = mcp.fetchTelemetry()
                     val charging = data.sensors["isChargingGunInserted"]?.let {
                         it.equals("true", true) || it == "1"
                     } == true
-                    // A successful API response is not reported as collected until SQLite confirms the insert.
+                    // A snapshot is counted only after SQLite confirms the insert.
                     db.insert(data, charging)
-                    CollectionDiagnostics.record(this@CollectorService, "Снимок записан • SOC ${data.soc.toInt()}% • одометр ${"%.1f".format(data.odometer)} км", true)
+                    CollectionDiagnostics.record(
+                        this@CollectorService,
+                        "Снимок MCP записан • SOC ${data.soc.toInt()}% • одометр ${"%.1f".format(data.odometer)} км",
+                        true
+                    )
                     consecutiveFailures = 0
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(0)
                     if (data.online) {
-                        estimator.add(RangeEstimator.Sample(
-                            data.odometer, data.soc, System.currentTimeMillis(), charging
-                        ))
+                        estimator.add(RangeEstimator.Sample(data.odometer, data.soc, System.currentTimeMillis(), charging))
                         val range = estimator.estimate(data.soc, data.stockRange)
                         val rangeText = range?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
-                        updateNotification(
-                            "Записано • SOC ${data.soc.toInt()}% • одометр ${"%.1f".format(data.odometer)} км$rangeText"
-                        )
+                        updateNotification("MCP • SOC ${data.soc.toInt()}% • одометр ${"%.1f".format(data.odometer)} км$rangeText")
                     } else {
-                        updateNotification("Снимок записан • автомобиль офлайн")
+                        updateNotification("MCP: снимок записан • автомобиль офлайн")
                     }
                 } catch (e: AuthenticationRequiredException) {
-                    CollectionDiagnostics.record(this@CollectorService, "Авторизация: сессия истекла", false)
-                    updateNotification("Сессия Evolute истекла • войдите в аккаунт заново")
+                    CollectionDiagnostics.record(this@CollectorService, "Авторизация MCP bridge: ключ не принят", false)
+                    updateNotification("Ключ MCP bridge не принят • проверьте настройки")
                     stopSelf()
                     return@launch
                 } catch (e: Exception) {
                     consecutiveFailures = CollectorRetryBackoff.nextFailureCount(consecutiveFailures)
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
-                    val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(110) ?: "ошибка API"
+                    val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(110) ?: "ошибка MCP bridge"
                     CollectionDiagnostics.record(this@CollectorService, reason, false)
-                    updateNotification("Сбор не выполнен • повтор через ${nextDelayMs / 1000} с • $reason")
+                    updateNotification("MCP: нет свежих данных • повтор через ${nextDelayMs / 1000} с • $reason")
                 }
                 delay(nextDelayMs)
             }
