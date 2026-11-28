@@ -118,7 +118,7 @@ internal fun SocHistoryChart(
                 for (i in 1 until samples.size) {
                     val a = samples[i - 1]
                     val b = samples[i]
-                    val dashed = b.capturedAtMs - a.capturedAtMs > 90_000L
+                    val dashed = b.gapBefore
                     drawLine(
                         color = socColor((a.soc + b.soc) / 2.0),
                         start = Offset(x(a.capturedAtMs), y(a.soc)),
