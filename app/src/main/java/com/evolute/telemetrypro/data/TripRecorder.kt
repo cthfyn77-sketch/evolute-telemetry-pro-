@@ -3,7 +3,7 @@ package com.evolute.telemetrypro.data
 /**
  * Builds trip records from already-collected local telemetry.
  * A trip starts only after at least 0.2 km of forward odometer movement.
- * It ends after the vehicle is not ready and has remained stationary for 5 minutes.
+ * It ends only after ignition is explicitly off and the vehicle has remained stationary for 5 minutes.
  */
 class TripRecorder {
     fun record(db: SnapshotDb, telemetry: ApiClient.Telemetry, charging: Boolean, now: Long) {
@@ -12,6 +12,11 @@ class TripRecorder {
         val active = db.activeTrip()
         val lat = telemetry.sensors["lat"]?.toDoubleOrNull()?.takeIf { it.isFinite() && it in -90.0..90.0 }
         val lon = telemetry.sensors["lon"]?.toDoubleOrNull()?.takeIf { it.isFinite() && it in -180.0..180.0 }
+        val ignitionOn = when (telemetry.sensors["isIgnitionOn"]?.lowercase()) {
+            "true", "1" -> true
+            "false", "0" -> false
+            else -> null
+        }
 
         if (active == null) {
             if (charging || history.size < 2) return
@@ -36,7 +41,7 @@ class TripRecorder {
 
         db.updateTrip(active.id, telemetry.odometer, telemetry.soc, lat, lon, lastMovement)
 
-        if (!telemetry.ready && !charging && now - lastMovement >= STOP_TIMEOUT_MS) {
+        if (ignitionOn == false && !charging && now - lastMovement >= STOP_TIMEOUT_MS) {
             db.finishTrip(active.id, now, "completed")
         }
     }
