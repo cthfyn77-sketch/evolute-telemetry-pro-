@@ -12,5 +12,3 @@ data class TelemetrySnapshot(
     val rawSensorsJson: String? = null
 )
 
-/** Legacy MCP client exception retained until the unused bridge implementation is removed. */
-class AuthenticationRequiredException(message: String, cause: Throwable? = null) : java.io.IOException(message, cause)
