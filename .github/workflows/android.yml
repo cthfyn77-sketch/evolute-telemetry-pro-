@@ -1,3 +1,4 @@
+# CI trigger: verify telemetry restoration branch
 name: Android APK
 on:
   push:
