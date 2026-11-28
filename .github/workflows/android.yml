@@ -35,11 +35,11 @@ jobs:
         run: gradle --no-daemon testDebugUnitTest
 
       - name: Build debug APK
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_debug_apk == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_debug_apk == true
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Upload debug APK
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_debug_apk == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.build_debug_apk == true
         uses: actions/upload-artifact@v4
         with:
           name: evolute-telemetry-pro-debug
