@@ -67,14 +67,14 @@ class CollectorService : Service() {
                         updateNotification("Снимок записан • автомобиль офлайн")
                     }
                 } catch (e: AuthenticationRequiredException) {
-                    updateNotification("Сессия Evolute истекла • войдите в аккаунт заново")
+                    CollectionDiagnostics.record(this@CollectorService, "Авторизация: сессия истекла", false)\n                    updateNotification("Сессия Evolute истекла • войдите в аккаунт заново")
                     stopSelf()
                     return@launch
                 } catch (e: Exception) {
                     consecutiveFailures = CollectorRetryBackoff.nextFailureCount(consecutiveFailures)
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
                     val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(110) ?: "ошибка API"
-                    updateNotification("Сбор не выполнен • повтор через ${nextDelayMs / 1000} с • $reason")
+                    CollectionDiagnostics.record(this@CollectorService, reason, false)\n                    updateNotification("Сбор не выполнен • повтор через ${nextDelayMs / 1000} с • $reason")
                 }
                 delay(nextDelayMs)
             }
