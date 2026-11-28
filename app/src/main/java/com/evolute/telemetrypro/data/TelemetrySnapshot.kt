@@ -1,7 +1,5 @@
 package com.evolute.telemetrypro.data
 
-import java.io.IOException
-
 data class TelemetrySnapshot(
     val soc: Double,
     val odometer: Double,
@@ -9,8 +7,7 @@ data class TelemetrySnapshot(
     val online: Boolean,
     val ready: Boolean?,
     val updatedAt: String?,
-    val sensors: Map<String, String>
+    val sensors: Map<String, String>,
+    /** Complete decoded EVACONNECT response, preserved as received (with sensitive IDs redacted). */
+    val rawSensorsJson: String? = null
 )
-
-/** Invalid local MCP bridge credentials require the user to reconnect the bridge. */
-class AuthenticationRequiredException(message: String, cause: Throwable? = null) : IOException(message, cause)
