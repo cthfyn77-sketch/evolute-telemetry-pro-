@@ -123,12 +123,23 @@ class TripRecorder {
         anchorLat: Double?,
         anchorLon: Double?
     ): Boolean {
-        if (anchorLat == null || anchorLon == null || current.lat == null || current.lon == null) return false
-        val confirmedSamples = history.asSequence()
-            .filter { it.lat != null && it.lon != null && it.capturedAtMs >= current.capturedAtMs - GPS_CONFIRMATION_WINDOW_MS }
-            .count { distanceMeters(anchorLat, anchorLon, it.lat!!, it.lon!!) >= GPS_MOVEMENT_METERS }
-        return confirmedSamples >= 1 &&
-            distanceMeters(anchorLat, anchorLon, current.lat, current.lon) >= GPS_MOVEMENT_METERS
+        // GPS is only evidence of driving when both consecutive snapshots were
+        // captured with READY ON and the charge port unplugged. A single jump,
+        // stale coordinate, or movement recorded while parked/charging is ignored.
+        if (!current.ready || current.charging ||
+            anchorLat == null || anchorLon == null || current.lat == null || current.lon == null
+        ) return false
+
+        val previous = history.lastOrNull() ?: return false
+        if (!previous.ready || previous.charging ||
+            previous.lat == null || previous.lon == null ||
+            current.capturedAtMs - previous.capturedAtMs !in 0..MAX_GPS_SAMPLE_GAP_MS
+        ) return false
+
+        val previousDisplacement = distanceMeters(anchorLat, anchorLon, previous.lat, previous.lon)
+        val currentDisplacement = distanceMeters(anchorLat, anchorLon, current.lat, current.lon)
+        return previousDisplacement >= GPS_MOVEMENT_METERS &&
+            currentDisplacement >= GPS_MOVEMENT_METERS
     }
 
     private fun coordinate(raw: String?, min: Double, max: Double): Double? =
@@ -146,7 +157,7 @@ class TripRecorder {
 
     companion object {
         private const val START_LOOKBACK_MS = 10 * 60 * 1000L
-        private const val GPS_CONFIRMATION_WINDOW_MS = 10 * 60 * 1000L
+        private const val MAX_GPS_SAMPLE_GAP_MS = 2 * 60 * 1000L
         private const val GPS_MOVEMENT_METERS = 500.0
         private const val ODOMETER_EPSILON_KM = 0.001
         private const val READY_OFF_CLOSE_MS = 10 * 60 * 1000L
