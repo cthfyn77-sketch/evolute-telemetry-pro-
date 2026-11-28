@@ -145,7 +145,7 @@ class TripRecorder {
 
     companion object {
         private const val START_LOOKBACK_MS = 10 * 60 * 1000L
-        private const val GPS_CONFIRMATION_WINDOW_MS = 2 * 60 * 1000L
+        private const val GPS_CONFIRMATION_WINDOW_MS = 10 * 60 * 1000L
         private const val GPS_MOVEMENT_METERS = 500.0
         private const val ODOMETER_EPSILON_KM = 0.001
         private const val READY_OFF_CLOSE_MS = 10 * 60 * 1000L
