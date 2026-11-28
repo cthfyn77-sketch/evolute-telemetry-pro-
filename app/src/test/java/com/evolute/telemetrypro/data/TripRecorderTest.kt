@@ -15,8 +15,9 @@ class TripRecorderTest {
 
     @Test fun resumesSameTripAfterReadyOffAndDelayedChargingSession() {
         val context = RuntimeEnvironment.getApplication()
-        context.deleteDatabase("evolute_telemetry_pro.sqlite")
         val db = SnapshotDb.get(context)
+        db.writableDatabase.delete("trips", null, null)
+        db.writableDatabase.delete("samples", null, null)
         val recorder = TripRecorder()
         var odo = 100.0
         var soc = 90.0
