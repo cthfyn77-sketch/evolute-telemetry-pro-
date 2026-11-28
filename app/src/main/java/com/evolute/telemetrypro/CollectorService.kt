@@ -104,6 +104,12 @@ class CollectorService : Service() {
         return START_STICKY
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        // Android 15+ limits dataSync foreground-service runtime; the Activity restarts collection when reopened.
+        pollJob?.cancel()
+        stopSelf(startId)
+    }
+
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java)
             .createNotificationChannel(NotificationChannel(CHANNEL, "Сбор телеметрии", NotificationManager.IMPORTANCE_LOW))
