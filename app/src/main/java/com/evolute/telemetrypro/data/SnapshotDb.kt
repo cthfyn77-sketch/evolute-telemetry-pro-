@@ -36,7 +36,7 @@ class SnapshotDb private constructor(context: Context) :
             put("soc", t.soc); put("odometer", t.odometer); put("stock_range", t.stockRange)
             put("online", if (t.online) 1 else 0); put("ready", t.ready?.let { if (it) 1 else 0 } ?: -1)
             put("charging", if (charging) 1 else 0)
-            put("sensors_json", org.json.JSONObject(t.sensors).toString())
+            put("sensors_json", t.rawSensorsJson ?: org.json.JSONObject(t.sensors).toString())
         }
         writableDatabase.insertOrThrow("samples", null, values)
     }
