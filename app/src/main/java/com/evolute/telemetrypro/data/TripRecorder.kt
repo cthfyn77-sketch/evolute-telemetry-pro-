@@ -16,10 +16,13 @@ class TripRecorder {
 
         if (active == null) {
             if (!telemetry.ready || charging || previous == null) return
-            val gpsBaseline = history.lastOrNull {
+            // Anchor GPS-only detection to the earliest eligible snapshot
+            // in the recent READY/unplugged window. Do not select by distance
+            // from the current point: that would discard the very baseline
+            // once the car has crossed the 500 m movement threshold.
+            val gpsBaseline = history.firstOrNull {
                 it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS &&
-                    it.lat != null && it.lon != null && lat != null && lon != null &&
-                    distanceMeters(it.lat, it.lon, lat, lon) < GPS_MOVEMENT_METERS
+                    it.lat != null && it.lon != null
             }
             val odometerBaseline = previous.takeIf {
                 it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS
