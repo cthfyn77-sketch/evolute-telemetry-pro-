@@ -15,8 +15,9 @@ class TripHistoryDbTest {
 
     @Test fun storesAndFinishesTripWithoutChangingSampleHistory() {
         val context = RuntimeEnvironment.getApplication()
-        context.deleteDatabase("evolute_telemetry_pro.sqlite")
         val db = SnapshotDb.get(context)
+        db.writableDatabase.delete("trips", null, null)
+        db.writableDatabase.delete("samples", null, null)
 
         val id = db.startTrip(1_000L, 125.0, 88.0, null, null)
         assertEquals(id, db.activeTrip()?.id)
