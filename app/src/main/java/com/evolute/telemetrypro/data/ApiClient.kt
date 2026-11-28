@@ -90,7 +90,16 @@ class ApiClient(private val tokens: TokenStore) {
             return request(path, method, body, auth, retry401 = false, accessOverride = refreshed)
         }
         if (response.code == 401 && auth) {
-            throw AuthenticationRequiredException("Сервер отклонил access-token даже после обновления сессии")
+            // Preserve only safe server diagnostics: never include request headers,
+            // access/refresh tokens, IMEI, or raw response payload.
+            val detail = safeErrorDetail(response.raw)
+            val meta = response.headers.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            val suffix = buildList {
+                add("HTTP 401 после refresh")
+                if (detail != null) add(detail)
+                if (meta.isNotBlank()) add(meta)
+            }.joinToString("; ")
+            throw AuthenticationRequiredException("Сервер отклонил access-token даже после обновления сессии: $suffix")
         }
         if (response.code !in 200..299) {
             val detail = safeErrorDetail(response.raw)
