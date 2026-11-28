@@ -1,11 +1,16 @@
-name: Android verification
+name: Android verification and signed release
 on:
   push:
     branches: [ main, 'feature/**' ]
   workflow_dispatch:
     inputs:
       build_apk:
-        description: "Build debug APK (only when explicitly enabled)"
+        description: "Build signed release APK (requires the permanent signing secrets)"
+        required: true
+        type: boolean
+        default: false
+      build_debug_apk:
+        description: "Build and upload an unsigned debug APK"
         required: true
         type: boolean
         default: false
@@ -20,18 +25,77 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
       - name: Run unit tests
-        run: gradle testDebugUnitTest
-      - name: Build debug APK (manual approval only)
-        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
-        run: gradle assembleDebug
-      - name: Upload debug APK (manual approval only)
-        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        run: gradle --no-daemon testDebugUnitTest
+
+      - name: Build debug APK
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_debug_apk == true)
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Upload debug APK
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_debug_apk == true)
         uses: actions/upload-artifact@v4
         with:
           name: evolute-telemetry-pro-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Prepare permanent signing key
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEYSTORE_BASE64" || (echo "Missing SIGNING_KEYSTORE_BASE64" >&2; exit 1)
+          test -n "$SIGNING_KEYSTORE_PASSWORD" || (echo "Missing SIGNING_KEYSTORE_PASSWORD" >&2; exit 1)
+          test -n "$SIGNING_KEY_ALIAS" || (echo "Missing SIGNING_KEY_ALIAS" >&2; exit 1)
+          test -n "$SIGNING_KEY_PASSWORD" || (echo "Missing SIGNING_KEY_PASSWORD" >&2; exit 1)
+          mkdir -p "$RUNNER_TEMP/evolute-signing"
+          printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/evolute-signing/release.jks"
+          test -s "$RUNNER_TEMP/evolute-signing/release.jks"
+          echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/evolute-signing/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        env:
+          SIGNING_KEYSTORE_PATH: ${{ runner.temp }}/evolute-signing/release.jks
+          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Verify permanent APK certificate
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          APK_SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          test -s "$APK"
+          "$APK_SIGNER" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
+          EXPECTED="ee10dbf808f3362a5bc1a987a9c6c155a770c21e7bfcc53e2f482225c7ba8bcf"
+          ACTUAL="$(sed -n 's/.*certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1 | tr -d ':[:space:]' | tr 'A-F' 'a-f')"
+          test -n "$EXPECTED"
+          test "$ACTUAL" = "$EXPECTED" || (echo "APK certificate does not match the permanent signing certificate" >&2; exit 1)
+          sha256sum "$APK"
+
+      - name: Upload signed release APK
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: evolute-telemetry-pro-signed-release
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Remove signing key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/evolute-signing"

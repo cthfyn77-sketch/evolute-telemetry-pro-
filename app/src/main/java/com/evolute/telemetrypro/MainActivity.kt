@@ -21,14 +21,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.evolute.telemetrypro.data.ApiClient
+import com.evolute.telemetrypro.data.TelemetrySnapshot
 import com.evolute.telemetrypro.data.BatteryHistoryAnalyzer
 import com.evolute.telemetrypro.data.ChargingSessionAnalyzer
 import com.evolute.telemetrypro.data.DrivingEfficiencyAnalyzer
-import com.evolute.telemetrypro.data.KeystoreTokenStore
+import com.evolute.telemetrypro.data.BridgeConfigStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TripHistoryAnalyzer
 import com.evolute.telemetrypro.data.TripBatteryComparisonAnalyzer
@@ -44,31 +45,31 @@ private val Cyan = Color(0xFF28D7D0)
 private val Muted = Color(0xFF9FB0BA)
 
 private data class RefreshState(
-    val snapshot: ApiClient.Telemetry?,
+    val snapshot: TelemetrySnapshot?,
     val count: Long,
     val estimate: RangeEstimator.Estimate?,
     val capturedAtMs: Long?,
     val telemetryGaps: TelemetryGapAnalyzer.Report,
-    val vehicleState: VehicleMovementState.State
+    val vehicleState: VehicleMovementState.State,
+    val diagnostics: String
 )
 
 class MainActivity : ComponentActivity() {
-    private lateinit var tokenStore: KeystoreTokenStore
+    private lateinit var bridgeStore: BridgeConfigStore
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        tokenStore = KeystoreTokenStore(this)
+        bridgeStore = BridgeConfigStore(this)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        val existingSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
+        val existingSession = runCatching { bridgeStore.get() != null }.getOrDefault(false)
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
-                onSessionAvailable = { runCatching { tokenStore.get() != null }.getOrDefault(false) },
-                onRequestCode = { phone, country -> ApiClient(tokenStore).requestOtp(phone, country) },
-                onLogin = { phone, code ->
-                    ApiClient(tokenStore).signIn(phone, code)
+                onSessionAvailable = { runCatching { bridgeStore.get() != null }.getOrDefault(false) },
+                onLogin = { token ->
+                    bridgeStore.save(token.trim())
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
                 onRefresh = {
@@ -86,7 +87,8 @@ class MainActivity : ComponentActivity() {
                         nowMs
                     )
                     RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport,
-                        VehicleMovementState.analyze(db.vehicleMovementSamples()))
+                        VehicleMovementState.analyze(db.vehicleMovementSamples()),
+                        CollectionDiagnostics.summary(this))
                 },
                 onTripHistory = {
                     TripHistoryAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
@@ -115,7 +117,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Returning to the foreground resets Android's dataSync FGS quota.
         // Restart collection if Android stopped it after the background limit.
-        val hasSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
+        val hasSession = runCatching { bridgeStore.get() != null }.getOrDefault(false)
         if (hasSession) {
             runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
         }
@@ -126,8 +128,7 @@ class MainActivity : ComponentActivity() {
 private fun TelemetryProApp(
     hasSession: Boolean,
     onSessionAvailable: () -> Boolean,
-    onRequestCode: suspend (String, String) -> Unit,
-    onLogin: suspend (String, String) -> Unit,
+    onLogin: suspend (String) -> Unit,
     onRefresh: suspend () -> RefreshState,
     onTripHistory: suspend () -> TripHistoryAnalyzer.Report,
     onTripBatteryComparison: suspend () -> TripBatteryComparisonAnalyzer.Report,
@@ -136,21 +137,19 @@ private fun TelemetryProApp(
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
-    var phone by remember { mutableStateOf("") }
-    var country by remember { mutableStateOf("RU") }
-    var code by remember { mutableStateOf("") }
+    var bridgeToken by remember { mutableStateOf("") }
     var session by remember { mutableStateOf(hasSession) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf(if (hasSession) "Сессия найдена" else "Войдите в аккаунт Evolute") }
-    var smsSent by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf(if (hasSession) "MCP bridge подключён" else "Подключите локальный evaconnect-mcp bridge") }
     var tab by remember { mutableStateOf("Главная") }
     var showAdditional by rememberSaveable { mutableStateOf(true) }
     var showTechnicalSensors by rememberSaveable { mutableStateOf(true) }
-    var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
+    var snapshot by remember { mutableStateOf<TelemetrySnapshot?>(null) }
     var count by remember { mutableLongStateOf(0L) }
     var capturedAtMs by remember { mutableStateOf<Long?>(null) }
     var telemetryGaps by remember { mutableStateOf(TelemetryGapAnalyzer.Report.empty()) }
     var vehicleState by remember { mutableStateOf(VehicleMovementState.State.UNKNOWN) }
+    var diagnostics by remember { mutableStateOf("Диагностика ещё не загружена") }
     var clockNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
@@ -177,6 +176,7 @@ private fun TelemetryProApp(
                 capturedAtMs = result.capturedAtMs
                 telemetryGaps = result.telemetryGaps
                 vehicleState = result.vehicleState
+                diagnostics = result.diagnostics
                 clockNowMs = System.currentTimeMillis()
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Локальная история обновлена"
             } catch (e: Exception) {
@@ -196,7 +196,7 @@ private fun TelemetryProApp(
                 val available = withContext(Dispatchers.IO) { onSessionAvailable() }
                 if (!available) {
                     session = false
-                    status = "Сессия истекла • войдите в аккаунт заново"
+                    status = "Ключ MCP bridge недоступен • подключите bridge заново"
                     break
                 }
                 refresh()
@@ -268,33 +268,33 @@ private fun TelemetryProApp(
             Spacer(Modifier.height(18.dp))
             if (!session) {
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Авторизация Evolute", color = Cyan, fontSize = 18.sp)
-                        OutlinedTextField(phone, { phone = it.filter(Char::isDigit).take(15) }, label = { Text("Телефон с кодом страны") }, singleLine = true)
-                        OutlinedTextField(country, { country = it.take(2).uppercase() }, label = { Text("Код страны") }, singleLine = true)
-                        Button(enabled = !busy, onClick = {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Подключение EVACONNECT MCP", color = Cyan, fontSize = 18.sp)
+                        Text(
+                            "Запустите evaconnect-mcp bridge в Termux на этом телефоне. Затем вставьте ключ из ~/.config/evolute/bridge-token. Приложение обращается только к локальному MCP bridge.",
+                            color = Muted, fontSize = 12.sp
+                        )
+                        OutlinedTextField(
+                            bridgeToken, { bridgeToken = it.trim() },
+                            label = { Text("Ключ локального MCP bridge") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(enabled = !busy && bridgeToken.length >= 32, onClick = {
                             busy = true
+                            status = "Подключаем MCP bridge…"
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { onRequestCode(phone, country) }
-                                    smsSent = true; status = "SMS-код запрошен"
-                                } catch (e: Exception) { status = e.message ?: "Не удалось запросить код" }
+                                    withContext(Dispatchers.IO) { onLogin(bridgeToken) }
+                                    session = true
+                                    bridgeToken = ""
+                                    status = "Ключ сохранён в Android Keystore • сбор через MCP запущен"
+                                } catch (e: Exception) { status = e.message ?: "Не удалось подключить MCP bridge" }
                                 finally { busy = false }
                             }
-                        }) { Text(if (busy) "Подождите…" else "Запросить SMS-код") }
-                        if (smsSent) {
-                            OutlinedTextField(code, { code = it.filter(Char::isDigit).take(8) }, label = { Text("Код из SMS") }, singleLine = true)
-                            Button(enabled = !busy, onClick = {
-                                busy = true
-                                scope.launch {
-                                    try {
-                                        withContext(Dispatchers.IO) { onLogin(phone, code) }
-                                        session = true
-                                        status = "Авторизация успешна • сбор запущен автоматически"
-                                    } catch (e: Exception) { status = e.message ?: "Ошибка входа" }
-                                    finally { busy = false }
-                                }
-                            }) { Text("Войти и начать сбор") }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (busy) "Подождите…" else "Подключить MCP и начать сбор")
                         }
                     }
                 }
@@ -518,7 +518,13 @@ private fun TelemetryProApp(
             }
             Spacer(Modifier.height(12.dp))
             Text(status, color = Muted, fontSize = 12.sp)
-            Text("Только чтение API • токены зашифрованы Android Keystore • данные хранятся локально", color = Muted, fontSize = 11.sp)
+            Card(Modifier.fillMaxWidth().padding(top = 8.dp), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Диагностика сбора телеметрии", color = Cyan, fontSize = 13.sp)
+                    Text(diagnostics, color = Muted, fontSize = 11.sp)
+                }
+            }
+            Text("Только чтение через evaconnect-mcp • ключ зашифрован Android Keystore • снимки хранятся локально", color = Muted, fontSize = 11.sp)
         }
     }
 }
