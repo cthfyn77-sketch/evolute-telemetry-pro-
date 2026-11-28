@@ -140,8 +140,12 @@ class SnapshotDb private constructor(context: Context) :
         "SELECT soc,odometer,stock_range,online,ready,api_updated_at,sensors_json FROM samples ORDER BY id DESC LIMIT 1", null
     ).use { c ->
         if (!c.moveToFirst()) return null
-        val sensorsObj = org.json.JSONObject(c.getString(6))
-        val sensors = sensorsObj.keys().asSequence().associateWith { sensorsObj.optString(it) }
+        val fullResponse = org.json.JSONObject(c.getString(6))
+        val sensorsObj = fullResponse.optJSONObject("sensors") ?: fullResponse
+        val sensors = sensorsObj.keys().asSequence().associateWith { key ->
+            val value = sensorsObj.opt(key)
+            if (value is org.json.JSONObject || value is org.json.JSONArray) value.toString() else value?.toString().orEmpty()
+        }
         TelemetrySnapshot(c.getDouble(0), c.getDouble(1), if (c.isNull(2)) null else c.getDouble(2),
             c.getInt(3) == 1, c.getInt(4).let { if (it < 0) null else it == 1 }, if (c.isNull(5)) null else c.getString(5), sensors)
     }
