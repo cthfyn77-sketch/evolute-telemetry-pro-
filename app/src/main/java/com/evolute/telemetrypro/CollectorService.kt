@@ -43,7 +43,7 @@ class CollectorService : Service() {
             val tokenStore = KeystoreTokenStore(this@CollectorService)
             try {
                 if (!Python.isStarted()) Python.start(AndroidPlatform(applicationContext))
-                val bridge = Python.getInstance().getModule("evaconnect_bridge")
+                val bridge = Python.getInstance().getModule("evaconnect_android")
                 while (isActive) {
                     try {
                         val saved = tokenStore.get() ?: throw IOException("Сначала выполните вход по SMS")
