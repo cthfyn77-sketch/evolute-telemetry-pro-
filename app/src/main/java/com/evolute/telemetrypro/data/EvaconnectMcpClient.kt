@@ -64,13 +64,13 @@ class EvaconnectMcpClient(
         add(climate, "outside", "outsideTemp")
         add(climate, "target", "climateTargetTemp")
         add(climate, "fan", "climateFanSpeed")
-        val body = root.optJSONObject("body")
-        add(body, "locked", "isCentralLockingOn")
-        add(body, "door_fl", "doorFLStatus")
-        add(body, "door_fr", "doorFRStatus")
-        add(body, "door_rl", "doorRLStatus")
-        add(body, "door_rr", "doorRRStatus")
-        add(body, "trunk", "trunkStatus")
+        val bodySection = root.optJSONObject("body")
+        add(bodySection, "locked", "isCentralLockingOn")
+        add(bodySection, "door_fl", "doorFLStatus")
+        add(bodySection, "door_fr", "doorFRStatus")
+        add(bodySection, "door_rl", "doorRLStatus")
+        add(bodySection, "door_rr", "doorRRStatus")
+        add(bodySection, "trunk", "trunkStatus")
         val updatedAt = root.optString("car_state_updated_at").takeIf { it.isNotBlank() && it != "null" }
         // The MCP public_status tool does not expose isCarStateReady. Never infer readiness.
         return TelemetrySnapshot(
