@@ -17,9 +17,10 @@
 
 1. Установите evaconnect и MCP-зависимости в том же Python 3.12+ окружении.
 2. Убедитесь, что штатная сессия evaconnect доступна через `~/.config/evolute/credentials.json`.
-3. Запустите bridge из окружения evaconnect:
+3. Перейдите в корень репозитория приложения и запустите bridge из окружения evaconnect:
 
    ```bash
+   cd ~/evolute-telemetry-pro
    EVOLUTE_MCP_COMMAND="$HOME/evaconnect-termux/.venv/bin/evaconnect-mcp" \
      "$HOME/evaconnect-termux/.venv/bin/python" tools/evaconnect_mcp_bridge.py
    ```
@@ -39,4 +40,4 @@ Bridge использует MCP stdio transport и вызывает MCP-инст
 
 ## Проверки и сборка
 
-GitHub Actions запускает unit-тесты. Сборку APK не запускать без отдельного разрешения пользователя.
+GitHub Actions запускает `gradle --no-daemon testDebugUnitTest`. Последняя проверка на коммите `570bb953` завершилась успешно. Smoke-проверка локального bridge в Termux также подтвердила доступность MCP, SOC и одометра. APK/release-сборки в рамках этой проверки не выполнялись; запускать их только после отдельного разрешения пользователя.
