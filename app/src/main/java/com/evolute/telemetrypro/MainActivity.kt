@@ -193,7 +193,7 @@ private fun TelemetryProApp(
                                 fun duration(ms: Long): String = "${ms / 3_600_000} ч ${(ms / 60_000) % 60} мин"
                                 val cableDuration = charge.durationMs?.let(::duration) ?: "кабель подключён"
                                 val transferDuration = duration(charge.energyDurationMs)
-                                val before = charge.socBeforeEnergy?.let { "${"%.0f".format(it)}%" } ?: "—"
+                                val before = (charge.socBeforeEnergy ?: charge.cableInsertedSoc)?.let { "${"%.0f".format(it)}%" } ?: "—"
                                 val after = charge.socAfterEnergy?.let { "${"%.0f".format(it)}%" } ?: if (charge.cableRemovedAtMs == null) "ожидание" else "—"
                                 val gain = charge.socGain?.let { "${if (it >= 0) "+" else ""}${"%.1f".format(it)} п.п." } ?: "—"
                                 val sensorInfo = if (charge.hasEnergyStateSensor) "Индикатор передачи энергии найден" else "Отдельный индикатор передачи энергии пока не распознан"
