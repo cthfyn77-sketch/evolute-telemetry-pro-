@@ -9,6 +9,11 @@ on:
         required: true
         type: boolean
         default: false
+      build_debug_apk:
+        description: "Build and upload an unsigned debug APK"
+        required: true
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -28,6 +33,18 @@ jobs:
           gradle-version: '8.11.1'
       - name: Run unit tests
         run: gradle --no-daemon testDebugUnitTest
+
+      - name: Build debug APK
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_debug_apk == true)
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Upload debug APK
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_debug_apk == true)
+        uses: actions/upload-artifact@v4
+        with:
+          name: evolute-telemetry-pro-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
       - name: Prepare permanent signing key
         if: github.event_name == 'workflow_dispatch' && inputs.build_apk == true
