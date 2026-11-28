@@ -32,6 +32,10 @@ def load_or_create_token() -> str:
     try:
         token = TOKEN_FILE.read_text(encoding="utf-8").strip()
         if len(token) >= 32:
+            try:
+                TOKEN_FILE.chmod(0o600)
+            except OSError:
+                pass
             return token
     except FileNotFoundError:
         pass
