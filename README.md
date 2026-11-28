@@ -24,4 +24,4 @@ Android-приложение для мониторинга Evolute i-JOY. Packag
 
 ## Проверки и сборка
 
-Push в feature-ветку запускает Unit-тесты и сборку Debug APK. Release APK не собирается автоматически; для него требуется отдельный ручной запуск workflow.
+Push в feature-ветку запускает Unit-тесты и сборку Debug APK; CI устанавливает Python 3.12 для Chaquopy. Release APK не собирается автоматически; для него требуется отдельный ручной запуск workflow.
