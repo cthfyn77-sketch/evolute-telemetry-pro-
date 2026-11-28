@@ -296,14 +296,27 @@ class SnapshotDb private constructor(context: Context) :
         ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
 
         if (plugInserted && energyState == true && openInterval == null) {
+            // Capture the last persisted reading before this snapshot first reports active transfer.
+            val previous = db.rawQuery(
+                "SELECT soc,sensors_json FROM samples ORDER BY id DESC LIMIT 1", null
+            ).use { c ->
+                if (!c.moveToFirst()) null else {
+                    val previousSensors = org.json.JSONObject(c.getString(1))
+                    val previousTemp = listOf("batteryTemp", "batteryTemperature", "tractionBatteryTemp")
+                        .firstNotNullOfOrNull { key -> previousSensors.optString(key).toDoubleOrNull()?.takeIf { it.isFinite() } }
+                    Pair(c.getDouble(0).takeIf { it.isFinite() && it in 0.0..100.0 }, previousTemp)
+                }
+            }
             val hasStarted = db.rawQuery(
                 "SELECT energy_started_at_ms FROM charging_sessions WHERE id=?", arrayOf(sessionId.toString())
             ).use { c -> c.moveToFirst() && !c.isNull(0) }
             val values = ContentValues().apply {
                 if (!hasStarted) {
                     put("energy_started_at_ms", at)
-                    if (soc == null) putNull("soc_before_energy") else put("soc_before_energy", soc)
-                    if (temp == null) putNull("battery_temp_before") else put("battery_temp_before", temp)
+                    val beforeSoc = previous?.first ?: soc
+                    val beforeTemp = previous?.second ?: temp
+                    if (beforeSoc == null) putNull("soc_before_energy") else put("soc_before_energy", beforeSoc)
+                    if (beforeTemp == null) putNull("battery_temp_before") else put("battery_temp_before", beforeTemp)
                 }
                 // A resumed transfer clears the previous pause boundary; it is still the same cable session.
                 putNull("energy_stopped_at_ms")
@@ -355,7 +368,7 @@ class SnapshotDb private constructor(context: Context) :
             """SELECT s.id,s.started_at_ms,s.energy_started_at_ms,s.energy_stopped_at_ms,
                s.cable_removed_at_ms,s.cable_inserted_soc,s.soc_before_energy,s.soc_after_energy,
                s.battery_temp_before,s.battery_temp_after,s.has_energy_state_sensor,
-               COALESCE((SELECT SUM(MAX(0, COALESCE(i.ended_at_ms, s.energy_stopped_at_ms, s.started_at_ms) - i.started_at_ms))
+               COALESCE((SELECT SUM(MAX(0, COALESCE(i.ended_at_ms, s.energy_stopped_at_ms, CAST(strftime('%s','now') AS INTEGER)*1000) - i.started_at_ms))
                  FROM charging_intervals i WHERE i.session_id=s.id),0)
                FROM charging_sessions s ORDER BY s.started_at_ms DESC LIMIT ?""",
             arrayOf(limit.toString())
