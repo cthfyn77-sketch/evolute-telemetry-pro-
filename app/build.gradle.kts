@@ -42,6 +42,7 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.12"
+        buildPython("python3.12")
         pip { install("httpx==0.28.1") }
     }
 }
