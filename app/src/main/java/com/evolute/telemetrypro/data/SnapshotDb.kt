@@ -144,6 +144,24 @@ class SnapshotDb private constructor(context: Context) :
         writableDatabase.update("trips", values, "id=? AND ended_at_ms IS NULL", arrayOf(id.toString()))
     }
 
+    @Synchronized fun tripMetrics(trip: TripRecord): TripMetrics {
+        val endMs = trip.endedAtMs ?: trip.lastMovementMs
+        val temperatures = readableDatabase.rawQuery(
+            "SELECT sensors_json FROM samples WHERE captured_ms BETWEEN ? AND ? ORDER BY captured_ms",
+            arrayOf(trip.startedAtMs.toString(), endMs.toString())
+        ).use { c ->
+            val values = ArrayList<Double>()
+            while (c.moveToNext()) {
+                val sensors = org.json.JSONObject(c.getString(0))
+                val value = listOf("batteryTemp", "batteryTemperature", "tractionBatteryTemp")
+                    .firstNotNullOfOrNull { key -> sensors.optString(key).toDoubleOrNull()?.takeIf { it.isFinite() } }
+                if (value != null) values.add(value)
+            }
+            values
+        }
+        return TripMetrics.calculate(trip, temperatures)
+    }
+
     fun recentTrips(limit: Int = 50): List<TripRecord> = readableDatabase.rawQuery(
         "SELECT $tripColumns FROM trips ORDER BY started_at_ms DESC LIMIT ?",
         arrayOf(limit.toString())

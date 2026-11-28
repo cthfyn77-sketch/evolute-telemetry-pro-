@@ -33,3 +33,42 @@ data class TripSample(
     val lat: Double?,
     val lon: Double?
 )
+
+data class TripMetrics(
+    val averageSpeedKmh: Double?,
+    val energyUsedKwh: Double?,
+    val consumptionKwhPer100Km: Double?,
+    val minBatteryTempC: Double?,
+    val averageBatteryTempC: Double?,
+    val maxBatteryTempC: Double?,
+    val temperatureSamples: Int
+) {
+    companion object {
+        const val BATTERY_CAPACITY_KWH = 52.0
+
+        fun calculate(trip: TripRecord, temperatures: List<Double>): TripMetrics {
+            val endMs = trip.endedAtMs ?: trip.lastMovementMs
+            val durationMs = (endMs - trip.startedAtMs).coerceAtLeast(0L)
+            val averageSpeed = if (durationMs > 0L && trip.distanceKm > 0.0) {
+                trip.distanceKm / (durationMs / 3_600_000.0)
+            } else null
+            val socDrop = trip.startSoc - trip.endSoc
+            val energy = if (socDrop >= 0.0 && socDrop <= 100.0) {
+                socDrop / 100.0 * BATTERY_CAPACITY_KWH
+            } else null
+            val consumption = if (energy != null && trip.distanceKm > 0.0) {
+                energy / trip.distanceKm * 100.0
+            } else null
+            val validTemps = temperatures.filter { it.isFinite() }
+            return TripMetrics(
+                averageSpeedKmh = averageSpeed,
+                energyUsedKwh = energy,
+                consumptionKwhPer100Km = consumption,
+                minBatteryTempC = validTemps.minOrNull(),
+                averageBatteryTempC = validTemps.takeIf { it.isNotEmpty() }?.average(),
+                maxBatteryTempC = validTemps.maxOrNull(),
+                temperatureSamples = validTemps.size
+            )
+        }
+    }
+}

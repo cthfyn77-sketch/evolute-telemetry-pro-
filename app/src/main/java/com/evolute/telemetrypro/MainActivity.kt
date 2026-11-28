@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,6 +30,7 @@ import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.TripRecord
+import com.evolute.telemetrypro.data.TripMetrics
 import com.evolute.telemetrypro.data.ChargingSession
 import com.evolute.telemetrypro.data.SocSample
 import kotlinx.coroutines.Dispatchers
@@ -90,6 +92,7 @@ class MainActivity : ComponentActivity() {
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
                 onTrips = { SnapshotDb.get(this).recentTrips(30) },
+                onTripMetrics = { trip -> SnapshotDb.get(this).tripMetrics(trip) },
                 onChargingSessions = { SnapshotDb.get(this).recentChargingSessions(30) },
                 onSocHistory = { sinceMs -> SnapshotDb.get(this).recentSocSamples(sinceMs) },
                 onRefresh = {
@@ -118,6 +121,7 @@ private fun TelemetryProApp(
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
     onTrips: suspend () -> List<TripRecord>,
+    onTripMetrics: suspend (TripRecord) -> TripMetrics,
     onChargingSessions: suspend () -> List<ChargingSession>,
     onSocHistory: suspend (Long) -> List<SocSample>,
     onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
@@ -135,6 +139,8 @@ private fun TelemetryProApp(
     var count by remember { mutableLongStateOf(0L) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var trips by remember { mutableStateOf<List<TripRecord>>(emptyList()) }
+    var selectedTrip by remember { mutableStateOf<TripRecord?>(null) }
+    var selectedTripMetrics by remember { mutableStateOf<TripMetrics?>(null) }
     var chargingSessions by remember { mutableStateOf<List<ChargingSession>>(emptyList()) }
     var socSamples by remember { mutableStateOf<List<SocSample>>(emptyList()) }
     var socPeriodDays by remember { mutableIntStateOf(1) }
@@ -312,26 +318,72 @@ private fun TelemetryProApp(
                         }
                     }
                     "Поездки" -> {
-                        MetricCard("Журнал поездок", "${trips.size}", "Начало по READY и движению; GPS-подтверждение — 500 м")
-                        if (trips.isEmpty()) {
-                            MetricCard("Поездок пока нет", "Ожидание движения", "Запись начнётся при READY ON и подтверждённом движении по одометру или GPS")
+                        if (selectedTrip != null) {
+                            val trip = selectedTrip!!
+                            val metrics = selectedTripMetrics
+                            fun dateTime(ms: Long): String = java.time.Instant.ofEpochMilli(ms)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"))
+                            fun number(value: Double?, suffix: String): String =
+                                value?.let { "${"%.1f".format(it)}$suffix" } ?: "—"
+                            TextButton(onClick = {
+                                selectedTrip = null
+                                selectedTripMetrics = null
+                            }) { Text("← К списку поездок") }
+                            Text("Подробности поездки", color = Cyan, fontSize = 19.sp)
+                            MetricCard("Время начала", dateTime(trip.startedAtMs), "Локальное время устройства")
+                            MetricCard("Время окончания", trip.endedAtMs?.let(::dateTime) ?: "Поездка продолжается",
+                                if (trip.endedAtMs == null) "Ожидание завершения" else "Локальное время устройства")
+                            MetricCard("Пройденное расстояние", number(trip.distanceKm, " км"), "По данным одометра")
+                            MetricCard("Средняя скорость", number(metrics?.averageSpeedKmh, " км/ч"),
+                                "Расстояние поездки / полное время поездки")
+                            MetricCard("Начальный SOC", "${"%.1f".format(trip.startSoc)}%", "Заряд в начале поездки")
+                            MetricCard("Конечный SOC", "${"%.1f".format(trip.endSoc)}%", "Заряд в конце поездки")
+                            MetricCard("Потраченная энергия", number(metrics?.energyUsedKwh, " кВт·ч"),
+                                "Оценка по изменению SOC при расчётной ёмкости батареи 52 кВт·ч")
+                            MetricCard("Температура батареи",
+                                "Мин. ${number(metrics?.minBatteryTempC, " °C")}",
+                                "Средняя: ${number(metrics?.averageBatteryTempC, " °C")} • Максимальная: ${number(metrics?.maxBatteryTempC, " °C")} • Замеров: ${metrics?.temperatureSamples ?: 0}")
+                            MetricCard("Средний расход", number(metrics?.consumptionKwhPer100Km, " кВт·ч/100 км"),
+                                "Расчётная потраченная энергия / расстояние × 100")
+                            if (metrics?.energyUsedKwh == null) {
+                                Text("Расход энергии не рассчитан: SOC не показывает чистое снижение за поездку или нет достаточных данных.",
+                                    color = Muted, fontSize = 11.sp)
+                            }
                         } else {
-                            trips.forEach { trip ->
-                                val date = java.time.Instant.ofEpochMilli(trip.startedAtMs).toString().take(16).replace('T', ' ')
-                                val durationMin = trip.durationMs / 60_000
-                                val state = when {
-                                    trip.endedAtMs != null && trip.status == "interrupted" -> "Завершена с разрывом данных"
-                                    trip.endedAtMs != null -> "Завершена"
-                                    trip.status == "charging" -> "Ожидание во время подключённой зарядки"
-                                    trip.status == "waiting_after_charge" -> "Окно возобновления после зарядки"
-                                    trip.status == "waiting_ready_off" -> "Ожидание завершения (READY OFF)"
-                                    else -> "Поездка продолжается"
+                            MetricCard("Журнал поездок", "${trips.size}", "Начало по READY и движению; GPS-подтверждение — 500 м")
+                            if (trips.isEmpty()) {
+                                MetricCard("Поездок пока нет", "Ожидание движения", "Запись начнётся при READY ON и подтверждённом движении по одометру или GPS")
+                            } else {
+                                trips.forEach { trip ->
+                                    val date = java.time.Instant.ofEpochMilli(trip.startedAtMs)
+                                        .atZone(java.time.ZoneId.systemDefault())
+                                        .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"))
+                                    val state = when {
+                                        trip.endedAtMs != null && trip.status == "interrupted" -> "Завершена с разрывом данных"
+                                        trip.endedAtMs != null -> "Завершена"
+                                        trip.status == "charging" -> "Ожидание во время подключённой зарядки"
+                                        trip.status == "waiting_after_charge" -> "Окно возобновления после зарядки"
+                                        trip.status == "waiting_ready_off" -> "Ожидание завершения (READY OFF)"
+                                        else -> "Поездка продолжается"
+                                    }
+                                    MetricCard(
+                                        date,
+                                        "${"%.1f".format(trip.distanceKm)} км",
+                                        "${"%.0f".format(trip.startSoc)}% → ${"%.0f".format(trip.endSoc)}% • $state • Нажмите для подробностей",
+                                        onClick = {
+                                            scope.launch {
+                                                try {
+                                                    val loaded = withContext(Dispatchers.IO) { onTripMetrics(trip) }
+                                                    selectedTrip = trip
+                                                    selectedTripMetrics = loaded
+                                                } catch (e: Exception) {
+                                                    status = e.message ?: "Не удалось загрузить показатели поездки"
+                                                }
+                                            }
+                                        }
+                                    )
                                 }
-                                MetricCard(
-                                    date,
-                                    "${"%.1f".format(trip.distanceKm)} км",
-                                    "${"%.0f".format(trip.startSoc)}% → ${"%.0f".format(trip.endSoc)}% • расход SOC ${"%.1f".format(trip.socUsed)} п.п. • ${durationMin} мин • $state"
-                                )
                             }
                         }
                     }
@@ -354,8 +406,10 @@ private fun selectedIndexInGap(samples: List<SocSample>, index: Int): Boolean =
     index > 0 && index < samples.size && samples[index].gapBefore
 
 @Composable
-private fun MetricCard(title: String, value: String, detail: String) {
-    Card(Modifier.fillMaxWidth().padding(bottom = 12.dp), shape = RoundedCornerShape(18.dp),
+private fun MetricCard(title: String, value: String, detail: String, onClick: (() -> Unit)? = null) {
+    Card(Modifier.fillMaxWidth().padding(bottom = 12.dp).clickable(enabled = onClick != null) {
+        onClick?.invoke()
+    }, shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(18.dp)) {
             Text(title, color = Muted)
