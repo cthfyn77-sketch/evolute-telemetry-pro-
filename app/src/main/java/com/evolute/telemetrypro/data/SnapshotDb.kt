@@ -407,24 +407,40 @@ class SnapshotDb private constructor(context: Context) :
             result
         }
 
-    @Synchronized fun recentSocSamples(sinceMs: Long, limit: Int = 5000): List<SocSample> =
-        readableDatabase.rawQuery(
-            """SELECT captured_ms,soc,odometer,online,ready,charging,sensors_json
-               FROM (SELECT captured_ms,soc,odometer,online,ready,charging,sensors_json
-                     FROM samples WHERE captured_ms >= ? ORDER BY captured_ms DESC LIMIT ?)
-               ORDER BY captured_ms ASC""",
-            arrayOf(sinceMs.toString(), limit.toString())
+    @Synchronized fun recentSocSamples(sinceMs: Long, limit: Int = 1500): List<SocSample> {
+        val db = readableDatabase
+        val total = db.rawQuery(
+            "SELECT COUNT(*) FROM samples WHERE captured_ms >= ?", arrayOf(sinceMs.toString())
+        ).use { c -> c.moveToFirst(); c.getLong(0) }
+        if (total == 0L) return emptyList()
+        // Keep the chart light even for a full month, while retaining the first and latest samples.
+        val stride = kotlin.math.ceil(total.toDouble() / limit.coerceAtLeast(2)).toLong().coerceAtLeast(1L)
+        return db.rawQuery(
+            """SELECT s.captured_ms,s.soc,s.odometer,s.online,s.ready,s.charging,s.sensors_json,
+                      (SELECT MAX(p.captured_ms) FROM samples p
+                       WHERE p.captured_ms < s.captured_ms AND p.captured_ms >= ?) AS previous_sample_ms
+               FROM samples s
+               WHERE s.captured_ms >= ?
+                 AND (s.id % ? = 0
+                      OR s.id = (SELECT MIN(f.id) FROM samples f WHERE f.captured_ms >= ?)
+                      OR s.id = (SELECT MAX(l.id) FROM samples l WHERE l.captured_ms >= ?))
+               ORDER BY s.captured_ms ASC""",
+            arrayOf(sinceMs.toString(), sinceMs.toString(), stride.toString(),
+                sinceMs.toString(), sinceMs.toString())
         ).use { c ->
             val result = ArrayList<SocSample>()
             while (c.moveToNext()) {
                 val sensors = org.json.JSONObject(c.getString(6))
                 val temp = listOf("batteryTemp", "batteryTemperature", "tractionBatteryTemp")
                     .firstNotNullOfOrNull { key -> sensors.optString(key).toDoubleOrNull()?.takeIf { it.isFinite() } }
+                val previousMs = if (c.isNull(7)) null else c.getLong(7)
+                val hasGap = previousMs != null && c.getLong(0) - previousMs > 90_000L
                 result.add(SocSample(c.getLong(0), c.getDouble(1), c.getDouble(2),
-                    c.getInt(3) == 1, c.getInt(4) == 1, c.getInt(5) == 1, temp))
+                    c.getInt(3) == 1, c.getInt(4) == 1, c.getInt(5) == 1, temp, hasGap))
             }
             result
         }
+    }
 
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
