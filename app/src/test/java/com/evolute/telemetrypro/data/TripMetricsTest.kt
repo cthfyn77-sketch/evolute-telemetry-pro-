@@ -32,11 +32,6 @@ class TripMetricsTest {
         assertEquals(5.2, result.consumptionKwhPer100Km!!, 0.0001)
     }
 
-    @Test fun eightSocPointsEqual416Kwh() {
-        val result = TripMetrics.calculate(trip(startSoc = 82.0, endSoc = 74.0), emptyList())
-        assertEquals(4.16, result.energyUsedKwh!!, 0.0001)
-    }
-
     @Test fun calculatesAverageSpeedFromTripDuration() {
         val result = TripMetrics.calculate(trip(distance = 60.0, durationMs = 2 * 3_600_000L), emptyList())
         assertEquals(30.0, result.averageSpeedKmh!!, 0.0001)

@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
 import androidx.core.content.ContextCompat
 import com.evolute.telemetrypro.data.ApiClient
 import com.chaquo.python.Python
@@ -31,6 +33,7 @@ import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.TripRecord
 import com.evolute.telemetrypro.data.TripMetrics
+import com.evolute.telemetrypro.data.TripRoutePoint
 import com.evolute.telemetrypro.data.ChargingSession
 import com.evolute.telemetrypro.data.SocSample
 import kotlinx.coroutines.Dispatchers
@@ -73,6 +76,21 @@ class MainActivity : ComponentActivity() {
             result.optString("widget_id").takeIf { it.isNotBlank() }))
     }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val gpsPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true || result[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+            ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java).setAction("ENABLE_GPS"))
+        }
+    }
+
+    private fun enableGpsRoutes() {
+        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (fine || coarse) {
+            ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java).setAction("ENABLE_GPS"))
+        } else {
+            gpsPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         tokenStore = KeystoreTokenStore(this)
@@ -93,6 +111,9 @@ class MainActivity : ComponentActivity() {
                 },
                 onTrips = { SnapshotDb.get(this).recentTrips(30) },
                 onTripMetrics = { trip -> SnapshotDb.get(this).tripMetrics(trip) },
+                onTripRoute = { trip -> SnapshotDb.get(this).tripRoutePoints(trip.id) },
+                onActiveTripRoute = { val db = SnapshotDb.get(this); db.activeTrip()?.let { db.tripRoutePoints(it.id) } ?: emptyList() },
+                onEnableGps = { enableGpsRoutes() },
                 onChargingSessions = { SnapshotDb.get(this).recentChargingSessions(30) },
                 onSocHistory = { sinceMs -> SnapshotDb.get(this).recentSocSamples(sinceMs) },
                 onRefresh = {
@@ -122,6 +143,9 @@ private fun TelemetryProApp(
     onLogin: suspend (String, String) -> Unit,
     onTrips: suspend () -> List<TripRecord>,
     onTripMetrics: suspend (TripRecord) -> TripMetrics,
+    onTripRoute: suspend (TripRecord) -> List<TripRoutePoint>,
+    onActiveTripRoute: suspend () -> List<TripRoutePoint>,
+    onEnableGps: () -> Unit,
     onChargingSessions: suspend () -> List<ChargingSession>,
     onSocHistory: suspend (Long) -> List<SocSample>,
     onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
@@ -141,6 +165,8 @@ private fun TelemetryProApp(
     var trips by remember { mutableStateOf<List<TripRecord>>(emptyList()) }
     var selectedTrip by remember { mutableStateOf<TripRecord?>(null) }
     var selectedTripMetrics by remember { mutableStateOf<TripMetrics?>(null) }
+    var selectedTripRoute by remember { mutableStateOf<List<TripRoutePoint>>(emptyList()) }
+    var activeTripRoute by remember { mutableStateOf<List<TripRoutePoint>>(emptyList()) }
     var chargingSessions by remember { mutableStateOf<List<ChargingSession>>(emptyList()) }
     var socSamples by remember { mutableStateOf<List<SocSample>>(emptyList()) }
     var socPeriodDays by remember { mutableIntStateOf(1) }
@@ -154,6 +180,7 @@ private fun TelemetryProApp(
                 count = result.second
                 estimate = result.third
                 trips = withContext(Dispatchers.IO) { onTrips() }
+                activeTripRoute = withContext(Dispatchers.IO) { onActiveTripRoute() }
                 chargingSessions = withContext(Dispatchers.IO) { onChargingSessions() }
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Данные обновлены локально"
             } catch (e: Exception) { status = e.message ?: "Ошибка чтения данных" }
@@ -329,8 +356,11 @@ private fun TelemetryProApp(
                             TextButton(onClick = {
                                 selectedTrip = null
                                 selectedTripMetrics = null
+                                selectedTripRoute = emptyList()
                             }) { Text("← К списку поездок") }
                             Text("Подробности поездки", color = Cyan, fontSize = 19.sp)
+                            if (selectedTripRoute.isNotEmpty()) TripRouteMap(selectedTripRoute, live = trip.endedAtMs == null)
+                            else Text("GPS-маршрут пока не записан или геопозиция была недоступна.", color = Muted, fontSize = 12.sp)
                             MetricCard("Время начала", dateTime(trip.startedAtMs), "Локальное время устройства")
                             MetricCard("Время окончания", trip.endedAtMs?.let(::dateTime) ?: "Поездка продолжается",
                                 if (trip.endedAtMs == null) "Ожидание завершения" else "Локальное время устройства")
@@ -351,6 +381,12 @@ private fun TelemetryProApp(
                                     color = Muted, fontSize = 11.sp)
                             }
                         } else {
+                            Button(onClick = onEnableGps, modifier = Modifier.fillMaxWidth()) { Text("Включить запись GPS-маршрутов") }
+                            Text("GPS-точки сохраняются каждые 5 секунд при смещении от 5 м и только во время активной поездки. Для точного маршрута разрешите точную геопозицию.", color = Muted, fontSize = 11.sp)
+                            if (activeTripRoute.isNotEmpty()) {
+                                Text("Текущий маршрут", color = Cyan, fontSize = 17.sp)
+                                TripRouteMap(activeTripRoute, live = true)
+                            }
                             MetricCard("Журнал поездок", "${trips.size}", "Начало по READY и движению; GPS-подтверждение — 500 м")
                             if (trips.isEmpty()) {
                                 MetricCard("Поездок пока нет", "Ожидание движения", "Запись начнётся при READY ON и подтверждённом движении по одометру или GPS")
@@ -375,8 +411,10 @@ private fun TelemetryProApp(
                                             scope.launch {
                                                 try {
                                                     val loaded = withContext(Dispatchers.IO) { onTripMetrics(trip) }
+                                                    val route = withContext(Dispatchers.IO) { onTripRoute(trip) }
                                                     selectedTrip = trip
                                                     selectedTripMetrics = loaded
+                                                    selectedTripRoute = route
                                                 } catch (e: Exception) {
                                                     status = e.message ?: "Не удалось загрузить показатели поездки"
                                                 }
@@ -400,6 +438,54 @@ private fun TelemetryProApp(
             Text("Только чтение API • токены зашифрованы Android Keystore • данные хранятся локально", color = Muted, fontSize = 11.sp)
         }
     }
+}
+
+
+@Composable
+private fun TripRouteMap(points: List<TripRoutePoint>, live: Boolean) {
+    val pointsJson = remember(points) {
+        org.json.JSONArray().apply {
+            points.forEach { point -> put(org.json.JSONArray().put(point.latitude).put(point.longitude)) }
+        }.toString()
+    }
+    val html = remember(pointsJson, live) {
+        """
+        <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+        <style>html,body,#map{height:100%;margin:0;background:#101820}.leaflet-container{background:#101820}</style>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script></head>
+        <body><div id="map"></div><script>
+        const pts=$pointsJson;
+        const map=L.map('map',{zoomControl:true}).setView([48.85,2.35],5);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
+          maxZoom:19, attribution:'&copy; OpenStreetMap contributors'
+        }).addTo(map);
+        if(pts.length){
+          const line=L.polyline(pts,{color:'#28d7d0',weight:5,opacity:0.9}).addTo(map);
+          L.circleMarker(pts[0],{radius:7,color:'#fff',fillColor:'#16a34a',fillOpacity:1}).addTo(map).bindPopup('Начало');
+          L.circleMarker(pts[pts.length-1],{radius:7,color:'#fff',fillColor:'#ef4444',fillOpacity:1}).addTo(map).bindPopup('${if (live) "Текущее положение" else "Окончание"}');
+          ${if (live) "map.setView(pts[pts.length-1],16);" else "map.fitBounds(line.getBounds().pad(0.15));"}
+        }
+        </script></body></html>
+        """.trimIndent()
+    }
+    AndroidView(
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                setBackgroundColor(android.graphics.Color.rgb(16, 24, 32))
+            }
+        },
+        update = { view ->
+            val key = html.hashCode()
+            if (view.tag != key) {
+                view.tag = key
+                view.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "UTF-8", null)
+            }
+        },
+        modifier = Modifier.fillMaxWidth().height(280.dp)
+    )
 }
 
 private fun selectedIndexInGap(samples: List<SocSample>, index: Int): Boolean =

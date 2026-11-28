@@ -42,7 +42,10 @@ class TripRecorder {
                 confirmedGpsDisplacement(history, current, gpsBaseline.lat, gpsBaseline.lon)
             val start = if (odometerMoved) odometerBaseline else if (gpsMoved) gpsBaseline else null
             if (start != null) {
-                db.startTrip(start.capturedAtMs, start.odometerKm, start.soc, start.lat, start.lon)
+                val tripId = db.startTrip(start.capturedAtMs, start.odometerKm, start.soc, start.lat, start.lon)
+                if (start.lat != null && start.lon != null) {
+                    db.insertTripRoutePoint(tripId, start.capturedAtMs, start.lat, start.lon, null, null)
+                }
             }
             return
         }

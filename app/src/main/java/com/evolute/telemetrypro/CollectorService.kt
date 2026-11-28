@@ -7,6 +7,14 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.Looper
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.Manifest
+import androidx.core.content.ContextCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.evolute.telemetrypro.data.ApiClient
@@ -22,13 +30,21 @@ import java.io.IOException
 class CollectorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
+    private var locationManager: LocationManager? = null
+    private var locationListener: LocationListener? = null
+    private val registeredLocationProviders = mutableSetOf<String>()
+    private var locationForegroundTypeEnabled = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, notification("Ожидание подключения EVACONNECT"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification("Ожидание подключения EVACONNECT"), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification("Ожидание подключения EVACONNECT"))
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -38,7 +54,11 @@ class CollectorService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (pollJob?.isActive == true) return START_STICKY
+        if (intent?.action == "ENABLE_GPS") promoteForegroundForLocation()
+        if (pollJob?.isActive == true) {
+            syncGpsTracking(SnapshotDb.get(this))
+            return START_STICKY
+        }
 
         pollJob = scope.launch {
             val tokenStore = KeystoreTokenStore(this@CollectorService)
@@ -93,6 +113,7 @@ class CollectorService : Service() {
                         val now = System.currentTimeMillis()
                         tripRecorder.record(db, telemetry, charging, now)
                         db.insert(telemetry, charging)
+                        syncGpsTracking(db)
                         estimator.add(RangeEstimator.Sample(telemetry.odometer, telemetry.soc, now, charging))
                         val range = estimator.estimate(telemetry.soc, telemetry.stockRange)
                         val rangeText = range?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
@@ -114,6 +135,79 @@ class CollectorService : Service() {
             }
         }
         return START_STICKY
+    }
+
+
+    private fun hasLocationPermission(): Boolean {
+        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
+    private fun promoteForegroundForLocation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !hasLocationPermission() || locationForegroundTypeEnabled) return
+        try {
+            startForeground(
+                NOTIFICATION_ID, notification("GPS-маршрут готов к записи"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+            locationForegroundTypeEnabled = true
+        } catch (_: SecurityException) {
+            locationForegroundTypeEnabled = false
+        }
+    }
+
+    private fun syncGpsTracking(db: SnapshotDb) {
+        val trip = db.activeTrip()
+        val shouldTrack = trip != null && trip.status == "active" && hasLocationPermission()
+        if (!shouldTrack) {
+            stopGpsUpdates()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && locationForegroundTypeEnabled) {
+                try {
+                    startForeground(NOTIFICATION_ID, notification("Сбор телеметрии • GPS ожидает активную поездку"),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                } catch (_: Exception) { }
+                locationForegroundTypeEnabled = false
+            }
+            return
+        }
+        promoteForegroundForLocation()
+        val manager = locationManager ?: getSystemService(LocationManager::class.java).also { locationManager = it }
+        if (locationListener == null) {
+            locationListener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    val dbNow = SnapshotDb.get(this@CollectorService)
+                    val active = dbNow.activeTrip() ?: return
+                    dbNow.insertTripRoutePoint(
+                        active.id, location.time, location.latitude, location.longitude,
+                        location.accuracy.takeIf { location.hasAccuracy() }?.toDouble(),
+                        location.speed.takeIf { location.hasSpeed() }?.toDouble()
+                    )
+                }
+            }
+        }
+        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val providers = if (fine) listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            else listOf(LocationManager.NETWORK_PROVIDER)
+        for (provider in providers) {
+            if (provider in registeredLocationProviders) continue
+            try {
+                if (manager.isProviderEnabled(provider)) {
+                    manager.requestLocationUpdates(provider, 5_000L, 5f, locationListener!!, Looper.getMainLooper())
+                    registeredLocationProviders.add(provider)
+                }
+            } catch (_: SecurityException) {
+                // Permission may be revoked while the service is running.
+            } catch (_: IllegalArgumentException) {
+                // Provider is unavailable on this device.
+            }
+        }
+    }
+
+    private fun stopGpsUpdates() {
+        val listener = locationListener ?: return
+        try { locationManager?.removeUpdates(listener) } catch (_: SecurityException) { }
+        registeredLocationProviders.clear()
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
@@ -142,6 +236,7 @@ class CollectorService : Service() {
 
     override fun onDestroy() {
         pollJob?.cancel()
+        stopGpsUpdates()
         scope.cancel()
         super.onDestroy()
     }

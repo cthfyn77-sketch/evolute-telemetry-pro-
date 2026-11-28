@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.time.Instant
 
 class SnapshotDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 5) {
+    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 6) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE samples(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,6 +25,7 @@ class SnapshotDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX idx_samples_time ON samples(captured_ms)")
         db.execSQL("CREATE INDEX idx_samples_odo ON samples(odometer)")
         createTripsTable(db)
+        createTripRoutePointsTable(db)
         createChargingSessionsTable(db)
     }
 
@@ -39,6 +40,7 @@ class SnapshotDb private constructor(context: Context) :
         }
         if (oldVersion < 4) createChargingSessionsTable(db)
         if (oldVersion < 5) upgradeChargingSessions(db)
+        if (oldVersion < 6) createTripRoutePointsTable(db)
     }
 
     private fun createChargingSessionsTable(db: SQLiteDatabase) {
@@ -142,6 +144,71 @@ class SnapshotDb private constructor(context: Context) :
     @Synchronized fun finishTrip(id: Long, at: Long, status: String = "completed") {
         val values = ContentValues().apply { put("ended_at_ms", at); put("status", status) }
         writableDatabase.update("trips", values, "id=? AND ended_at_ms IS NULL", arrayOf(id.toString()))
+    }
+
+
+    private fun createTripRoutePointsTable(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS trip_route_points(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id INTEGER NOT NULL,
+            captured_ms INTEGER NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            accuracy_m REAL,
+            speed_mps REAL
+        )""")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_trip_route_time ON trip_route_points(trip_id,captured_ms)")
+    }
+
+    @Synchronized fun insertTripRoutePoint(
+        tripId: Long, capturedMs: Long, latitude: Double, longitude: Double,
+        accuracyMeters: Double?, speedMetersPerSecond: Double?
+    ): Boolean {
+        val trip = activeTrip() ?: return false
+        if (trip.id != tripId || trip.status != "active") return false
+        if (!latitude.isFinite() || latitude !in -90.0..90.0 ||
+            !longitude.isFinite() || longitude !in -180.0..180.0) return false
+        if (accuracyMeters != null && (!accuracyMeters.isFinite() || accuracyMeters > 100.0)) return false
+        val previous = readableDatabase.rawQuery(
+            "SELECT captured_ms,latitude,longitude FROM trip_route_points WHERE trip_id=? ORDER BY captured_ms DESC LIMIT 1",
+            arrayOf(tripId.toString())
+        ).use { c -> if (c.moveToFirst()) Triple(c.getLong(0), c.getDouble(1), c.getDouble(2)) else null }
+        if (previous != null) {
+            if (capturedMs <= previous.first) return false
+            if (routeDistanceMeters(previous.second, previous.third, latitude, longitude) < 5.0) return false
+        }
+        val values = ContentValues().apply {
+            put("trip_id", tripId); put("captured_ms", capturedMs)
+            put("latitude", latitude); put("longitude", longitude)
+            if (accuracyMeters == null) putNull("accuracy_m") else put("accuracy_m", accuracyMeters)
+            if (speedMetersPerSecond == null) putNull("speed_mps") else put("speed_mps", speedMetersPerSecond)
+        }
+        writableDatabase.insertOrThrow("trip_route_points", null, values)
+        return true
+    }
+
+    fun tripRoutePoints(tripId: Long, limit: Int = 5000): List<TripRoutePoint> =
+        readableDatabase.rawQuery(
+            """SELECT captured_ms,latitude,longitude,accuracy_m,speed_mps
+               FROM trip_route_points WHERE trip_id=? ORDER BY captured_ms ASC LIMIT ?""",
+            arrayOf(tripId.toString(), limit.toString())
+        ).use { c ->
+            val points = ArrayList<TripRoutePoint>()
+            while (c.moveToNext()) points.add(TripRoutePoint(
+                capturedAtMs = c.getLong(0), latitude = c.getDouble(1), longitude = c.getDouble(2),
+                accuracyMeters = if (c.isNull(3)) null else c.getDouble(3),
+                speedMetersPerSecond = if (c.isNull(4)) null else c.getDouble(4)
+            ))
+            points
+        }
+
+    private fun routeDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+            kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+            kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+        return 6_371_000.0 * 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
     }
 
     @Synchronized fun tripMetrics(trip: TripRecord): TripMetrics {
