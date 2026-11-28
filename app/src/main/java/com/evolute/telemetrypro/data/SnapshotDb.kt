@@ -49,7 +49,6 @@ class SnapshotDb private constructor(context: Context) :
             end_soc REAL
         )""")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_charging_started ON charging_sessions(started_at_ms DESC)")
-        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_charging_active ON charging_sessions((1)) WHERE ended_at_ms IS NULL")
     }
 
     private fun createTripsTable(db: SQLiteDatabase) {
