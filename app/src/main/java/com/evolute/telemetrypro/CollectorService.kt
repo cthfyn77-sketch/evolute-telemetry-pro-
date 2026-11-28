@@ -10,6 +10,7 @@ import android.os.IBinder
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.evolute.telemetrypro.data.KeystoreTokenStore
+import com.evolute.telemetrypro.CollectionDiagnostics
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.TelemetrySnapshot
 import kotlinx.coroutines.*
@@ -78,12 +79,19 @@ class CollectorService : Service() {
                             sensors = sensors,
                             rawSensorsJson = rawSensors
                         )
-                        SnapshotDb.get(this@CollectorService).insert(snapshot)
-                        updateNotification("EVACONNECT: снимок обновлён • SOC ${snapshot.soc.toInt()}% • ${"%.1f".format(snapshot.odometer)} км")
+                        val charging = snapshot.sensors["isChargingGunInserted"]?.let {
+                            it.equals("true", true) || it == "1"
+                        } == true
+                        SnapshotDb.get(this@CollectorService).insert(snapshot, charging)
+                        val successMessage = "Снимок EVACONNECT записан • SOC ${snapshot.soc.toInt()}% • ${"%.1f".format(snapshot.odometer)} км"
+                        CollectionDiagnostics.record(this@CollectorService, successMessage, true)
+                        updateNotification(successMessage)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        updateNotification("EVACONNECT: ${e.message?.take(110) ?: e.javaClass.simpleName}")
+                        val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(160) ?: e.javaClass.simpleName
+                        CollectionDiagnostics.record(this@CollectorService, reason, false)
+                        updateNotification("EVACONNECT: $reason")
                     }
                     delay(30_000)
                 }
