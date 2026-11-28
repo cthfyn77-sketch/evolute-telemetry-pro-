@@ -52,6 +52,7 @@ class CollectorService : Service() {
                     } == true
                     // A successful API response is not reported as collected until SQLite confirms the insert.
                     db.insert(data, charging)
+                    CollectionDiagnostics.record(this@CollectorService, "Снимок записан • SOC ${data.soc.toInt()}% • одометр ${"%.1f".format(data.odometer)} км", true)
                     consecutiveFailures = 0
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(0)
                     if (data.online) {
