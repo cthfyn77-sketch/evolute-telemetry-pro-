@@ -1,6 +1,5 @@
 package com.evolute.telemetrypro.data
 
-import android.app.Application
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
