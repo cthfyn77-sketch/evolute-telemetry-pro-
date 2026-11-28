@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.time.Instant
 
 class SnapshotDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 1) {
+    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE samples(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,8 +24,78 @@ class SnapshotDb private constructor(context: Context) :
         )""")
         db.execSQL("CREATE INDEX idx_samples_time ON samples(captured_ms)")
         db.execSQL("CREATE INDEX idx_samples_odo ON samples(odometer)")
+        createTripsTable(db)
     }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createTripsTable(db)
+    }
+
+    private fun createTripsTable(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS trips(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at_ms INTEGER NOT NULL,
+            ended_at_ms INTEGER,
+            start_odometer REAL NOT NULL,
+            end_odometer REAL NOT NULL,
+            start_soc REAL NOT NULL,
+            end_soc REAL NOT NULL,
+            start_lat REAL,
+            start_lon REAL,
+            end_lat REAL,
+            end_lon REAL,
+            last_movement_ms INTEGER NOT NULL,
+            status TEXT NOT NULL
+        )""")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_trips_started ON trips(started_at_ms DESC)")
+    }
+
+    @Synchronized fun activeTrip(): TripRecord? = readableDatabase.rawQuery(
+        "SELECT id,started_at_ms,ended_at_ms,start_odometer,end_odometer,start_soc,end_soc,start_lat,start_lon,end_lat,end_lon,last_movement_ms,status FROM trips WHERE ended_at_ms IS NULL ORDER BY id DESC LIMIT 1", null
+    ).use { c -> if (c.moveToFirst()) tripFromCursor(c) else null }
+
+    @Synchronized fun startTrip(at: Long, odometer: Double, soc: Double, lat: Double?, lon: Double?): Long {
+        val values = ContentValues().apply {
+            put("started_at_ms", at); putNull("ended_at_ms")
+            put("start_odometer", odometer); put("end_odometer", odometer)
+            put("start_soc", soc); put("end_soc", soc)
+            if (lat == null) putNull("start_lat") else put("start_lat", lat)
+            if (lon == null) putNull("start_lon") else put("start_lon", lon)
+            putNull("end_lat"); putNull("end_lon")
+            put("last_movement_ms", at); put("status", "active")
+        }
+        return writableDatabase.insertOrThrow("trips", null, values)
+    }
+
+    @Synchronized fun updateTrip(id: Long, at: Long, odometer: Double, soc: Double, lat: Double?, lon: Double?, lastMovement: Long) {
+        val values = ContentValues().apply {
+            put("end_odometer", odometer); put("end_soc", soc); put("last_movement_ms", lastMovement)
+            if (lat == null) putNull("end_lat") else put("end_lat", lat)
+            if (lon == null) putNull("end_lon") else put("end_lon", lon)
+        }
+        writableDatabase.update("trips", values, "id=? AND ended_at_ms IS NULL", arrayOf(id.toString()))
+    }
+
+    @Synchronized fun finishTrip(id: Long, at: Long, status: String = "completed") {
+        val values = ContentValues().apply { put("ended_at_ms", at); put("status", status) }
+        writableDatabase.update("trips", values, "id=? AND ended_at_ms IS NULL", arrayOf(id.toString()))
+    }
+
+    fun recentTrips(limit: Int = 50): List<TripRecord> = readableDatabase.rawQuery(
+        "SELECT id,started_at_ms,ended_at_ms,start_odometer,end_odometer,start_soc,end_soc,start_lat,start_lon,end_lat,end_lon,last_movement_ms,status FROM trips ORDER BY started_at_ms DESC LIMIT ?",
+        arrayOf(limit.toString())
+    ).use { c ->
+        val result = ArrayList<TripRecord>()
+        while (c.moveToNext()) result.add(tripFromCursor(c))
+        result
+    }
+
+    private fun tripFromCursor(c: android.database.Cursor) = TripRecord(
+        id=c.getLong(0), startedAtMs=c.getLong(1), endedAtMs=if (c.isNull(2)) null else c.getLong(2),
+        startOdometer=c.getDouble(3), endOdometer=c.getDouble(4), startSoc=c.getDouble(5), endSoc=c.getDouble(6),
+        startLat=if (c.isNull(7)) null else c.getDouble(7), startLon=if (c.isNull(8)) null else c.getDouble(8),
+        endLat=if (c.isNull(9)) null else c.getDouble(9), endLon=if (c.isNull(10)) null else c.getDouble(10),
+        lastMovementMs=c.getLong(11), status=c.getString(12)
+    )
 
     @Synchronized fun insert(t: ApiClient.Telemetry, charging: Boolean = false) {
         val now = System.currentTimeMillis()
