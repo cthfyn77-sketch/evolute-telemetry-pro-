@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class VehicleMovementStateTest {
-    private fun sample(time: Long, ready: Boolean, online: Boolean = true) =
+    private fun sample(time: Long, ready: Boolean?, online: Boolean = true) =
         VehicleMovementState.Sample(time, online, ready)
 
     @Test fun readyTrueMeansInTransit() {
@@ -38,6 +38,11 @@ class VehicleMovementStateTest {
     @Test fun noOnlineSamplesMeansUnknown() {
         assertEquals(VehicleMovementState.State.UNKNOWN,
             VehicleMovementState.analyze(listOf(sample(1_000, true, online = false))))
+    }
+
+    @Test fun missingReadyFlagMeansUnknownRatherThanNotReady() {
+        assertEquals(VehicleMovementState.State.UNKNOWN,
+            VehicleMovementState.analyze(listOf(sample(1_000, null))))
     }
 
     @Test fun latestTimestampWinsEvenWhenInputIsUnordered() {
