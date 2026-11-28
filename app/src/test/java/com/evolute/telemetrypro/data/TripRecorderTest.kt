@@ -16,11 +16,12 @@ class TripRecorderTest {
         val recorder = TripRecorder()
         var odo = 100.0
         var soc = 90.0
+        var lat = 55.75
         var now = System.currentTimeMillis()
 
         fun telemetry(ready: Boolean, charging: Boolean = false) = ApiClient.Telemetry(
             soc, odo, null, true, ready, null,
-            mapOf("lat" to "55.75", "lon" to "37.61",
+            mapOf("lat" to lat.toString(), "lon" to "37.61",
                 "isChargingGunInserted" to charging.toString())
         )
         fun sample(ready: Boolean, charging: Boolean = false) {
@@ -78,5 +79,19 @@ class TripRecorderTest {
         assertEquals(tripId, finished.id)
         assertEquals("completed", finished.status)
         assertNotNull(finished.endedAtMs)
+
+        // GPS-only movement: one displaced snapshot is insufficient; the
+        // next consecutive snapshot beyond 500 m confirms the trip start.
+        now = System.currentTimeMillis()
+        lat = 55.75
+        db.insert(telemetry(ready = true), false)
+        now += 30_000
+        lat = 55.755
+        sample(ready = true)
+        assertNull(db.activeTrip())
+        now += 30_000
+        sample(ready = true)
+        assertNotNull(db.activeTrip())
+        assertEquals(100.3, db.activeTrip()?.startOdometer ?: -1.0, 0.001)
     }
 }
