@@ -102,21 +102,21 @@ class TripRecorderTest {
         lat = 55.755
         now = System.currentTimeMillis()
         db.insert(telemetry(ready = true), false) // new stationary baseline
-        now += 30_000
         lat = 55.760
+        now = System.currentTimeMillis()
         sample(ready = true) // first displaced snapshot
         assertNull(db.activeTrip())
-        now += 30_000
+        now = System.currentTimeMillis()
         sample(ready = false) // READY OFF breaks the sequence
-        now += 30_000
+        now = System.currentTimeMillis()
         sample(ready = true) // cannot combine with the old displaced point
         assertNull(db.activeTrip())
-        now += 30_000
+        now = System.currentTimeMillis()
         sample(ready = true, charging = true) // plugged-in snapshot breaks it
-        now += 30_000
+        now = System.currentTimeMillis()
         sample(ready = true) // one snapshot after unplug is insufficient
         assertNull(db.activeTrip())
-        now += 30_000
+        now = System.currentTimeMillis()
         sample(ready = true) // second consecutive eligible point confirms movement
         assertNotNull(db.activeTrip())
     }
