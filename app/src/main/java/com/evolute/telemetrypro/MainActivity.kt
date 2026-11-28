@@ -25,6 +25,8 @@ import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.TripRecord
+import com.evolute.telemetrypro.data.ChargingSession
+import com.evolute.telemetrypro.data.SocSample
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -56,6 +58,8 @@ class MainActivity : ComponentActivity() {
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
                 onTrips = { SnapshotDb.get(this).recentTrips(30) },
+                onChargingSessions = { SnapshotDb.get(this).recentChargingSessions(30) },
+                onSocHistory = { sinceMs -> SnapshotDb.get(this).recentSocSamples(sinceMs) },
                 onRefresh = {
                     val db = SnapshotDb.get(this)
                     val latest = db.latest()
@@ -74,6 +78,8 @@ private fun TelemetryProApp(
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
     onTrips: suspend () -> List<TripRecord>,
+    onChargingSessions: suspend () -> List<ChargingSession>,
+    onSocHistory: suspend (Long) -> List<SocSample>,
     onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
 ) {
     val scope = rememberCoroutineScope()
@@ -89,6 +95,10 @@ private fun TelemetryProApp(
     var count by remember { mutableLongStateOf(0L) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var trips by remember { mutableStateOf<List<TripRecord>>(emptyList()) }
+    var chargingSessions by remember { mutableStateOf<List<ChargingSession>>(emptyList()) }
+    var socSamples by remember { mutableStateOf<List<SocSample>>(emptyList()) }
+    var socPeriodDays by remember { mutableIntStateOf(1) }
+    var selectedSocIndex by remember { mutableIntStateOf(0) }
 
     fun refresh() {
         scope.launch {
@@ -98,6 +108,7 @@ private fun TelemetryProApp(
                 count = result.second
                 estimate = result.third
                 trips = withContext(Dispatchers.IO) { onTrips() }
+                chargingSessions = withContext(Dispatchers.IO) { onChargingSessions() }
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Данные обновлены локально"
             } catch (e: Exception) { status = e.message ?: "Ошибка чтения данных" }
         }
@@ -107,6 +118,18 @@ private fun TelemetryProApp(
         if (session) {
             refresh()
             while (true) { kotlinx.coroutines.delay(5_000); refresh() }
+        }
+    }
+
+    LaunchedEffect(session, tab, socPeriodDays) {
+        if (session && tab == "Батарея") {
+            try {
+                val since = System.currentTimeMillis() - socPeriodDays.toLong() * 86_400_000L
+                socSamples = withContext(Dispatchers.IO) { onSocHistory(since) }
+                selectedSocIndex = (socSamples.size - 1).coerceAtLeast(0)
+            } catch (e: Exception) {
+                status = e.message ?: "Не удалось загрузить историю SOC"
+            }
         }
     }
 
@@ -173,16 +196,97 @@ private fun TelemetryProApp(
                         MetricCard("Одометр", snapshot?.let { "${"%.1f".format(it.odometer)} км" } ?: "—", "Штатный показатель автомобиля")
                         MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
                     }
-                    "Батарея" -> MetricCard("Батарея", snapshot?.let { "SOC ${it.soc}%" } ?: "Нет данных", "Снимков сохранено: $count • графики в следующем этапе")
+                    "Батарея" -> {
+                        MetricCard("Батарея", snapshot?.let { "SOC ${it.soc.toInt()}%" } ?: "Нет данных",
+                            "Снимков сохранено: $count • история SOC по локальным снимкам")
+                        Card(Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = Panel)) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("История заряда", color = Color.White, fontSize = 18.sp)
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    listOf(1 to "24 часа", 7 to "7 дней", 30 to "30 дней").forEach { (days, label) ->
+                                        FilterChip(selected = socPeriodDays == days,
+                                            onClick = { socPeriodDays = days },
+                                            label = { Text(label, fontSize = 11.sp) })
+                                    }
+                                }
+                                val selected = socSamples.getOrNull(selectedSocIndex.coerceIn(0, (socSamples.size - 1).coerceAtLeast(0)))
+                                SocHistoryChart(socSamples, chargingSessions, selectedSocIndex,
+                                    onSelect = { selectedSocIndex = it })
+                                if (selected != null) {
+                                    Divider(color = Color(0xFF344650))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("Выбранный снимок", color = Cyan, fontSize = 13.sp)
+                                    Text("${java.time.Instant.ofEpochMilli(selected.capturedAtMs).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().toString().replace('T', ' ')}",
+                                        color = Color.White, fontSize = 14.sp)
+                                    Text("SOC ${"%.1f".format(selected.soc)}% • Одометр ${"%.1f".format(selected.odometer)} км",
+                                        color = Color.White, fontSize = 13.sp)
+                                    val vehicleState = when {
+                                        !selected.online -> "Офлайн"
+                                        selected.ready -> "READY • автомобиль готов"
+                                        else -> "Стоянка"
+                                    }
+                                    Text("Состояние: $vehicleState • Зарядка: ${if (selected.charging) "Подключена" else "Не подключена"}",
+                                        color = Muted, fontSize = 12.sp)
+                                    Text("Температура батареи: ${selected.batteryTemp?.let { "${"%.1f".format(it)} °C" } ?: "—"}",
+                                        color = Muted, fontSize = 12.sp)
+                                    if (selectedIndexInGap(socSamples, selectedSocIndex)) {
+                                        Text("Пунктир показывает интервал без снимков; значение между точками не измерялось.",
+                                            color = Color(0xFFFFD180), fontSize = 11.sp)
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        TextButton(enabled = selectedSocIndex > 0,
+                                            onClick = { selectedSocIndex = (selectedSocIndex - 1).coerceAtLeast(0) }) { Text("← Предыдущий") }
+                                        TextButton(enabled = selectedSocIndex < socSamples.lastIndex,
+                                            onClick = { selectedSocIndex = (selectedSocIndex + 1).coerceAtMost(socSamples.lastIndex) }) { Text("Следующий →") }
+                                    }
+                                }
+                                Text("Сплошная линия — последовательные снимки; цвет отражает SOC. Пунктир — перерыв телеметрии более 90 секунд. Голубые отметки — подключение и отключение кабеля.",
+                                    color = Muted, fontSize = 11.sp)
+                            }
+                        }
+                        MetricCard("Зарядные сессии", "${chargingSessions.size}", "Кабель и передача энергии учитываются отдельно")
+                        if (chargingSessions.isEmpty()) {
+                            MetricCard("История пока пуста", "Ожидание подключения", "Сессия будет записана при первом обнаружении подключённого разъёма")
+                        } else {
+                            chargingSessions.forEach { charge ->
+                                fun time(ms: Long?): String = ms?.let {
+                                    java.time.Instant.ofEpochMilli(it).toString().take(16).replace('T', ' ')
+                                } ?: "—"
+                                fun temp(value: Double?): String = value?.let { "${"%.1f".format(it)} °C" } ?: "—"
+                                fun duration(ms: Long): String = "${ms / 3_600_000} ч ${(ms / 60_000) % 60} мин"
+                                val cableDuration = charge.durationMs?.let(::duration) ?: "кабель подключён"
+                                val transferDuration = duration(charge.energyDurationMs)
+                                val before = (charge.socBeforeEnergy ?: charge.cableInsertedSoc)?.let { "${"%.0f".format(it)}%" } ?: "—"
+                                val after = charge.socAfterEnergy?.let { "${"%.0f".format(it)}%" } ?: if (charge.cableRemovedAtMs == null) "ожидание" else "—"
+                                val gain = charge.socGain?.let { "${if (it >= 0) "+" else ""}${"%.1f".format(it)} п.п." } ?: "—"
+                                val sensorInfo = if (charge.hasEnergyStateSensor) "Индикатор передачи энергии найден" else "Отдельный индикатор передачи энергии пока не распознан"
+                                MetricCard(
+                                    time(charge.cableInsertedAtMs),
+                                    "Кабель: $cableDuration • Передача энергии: $transferDuration",
+                                    "Подключение: ${time(charge.cableInsertedAtMs)} • Первая передача: ${time(charge.energyStartedAtMs)} • Последняя остановка: ${time(charge.energyStoppedAtMs)} • Отключение: ${time(charge.cableRemovedAtMs)}\nSOC: $before → $after ($gain) • Температура: ${temp(charge.batteryTempBefore)} → ${temp(charge.batteryTempAfter)}\n$sensorInfo"
+                                )
+                            }
+                        }
+                    }
                     "Поездки" -> {
-                        MetricCard("Журнал поездок", "${trips.size}", "Локальная история по фактическим изменениям одометра")
+                        MetricCard("Журнал поездок", "${trips.size}", "Начало по READY и движению; GPS-подтверждение — 500 м")
                         if (trips.isEmpty()) {
-                            MetricCard("Поездок пока нет", "Ожидание движения", "Запись начнётся после подтверждённого изменения одометра")
+                            MetricCard("Поездок пока нет", "Ожидание движения", "Запись начнётся при READY ON и подтверждённом движении по одометру или GPS")
                         } else {
                             trips.forEach { trip ->
                                 val date = java.time.Instant.ofEpochMilli(trip.startedAtMs).toString().take(16).replace('T', ' ')
                                 val durationMin = trip.durationMs / 60_000
-                                val state = if (trip.endedAtMs == null) "Поездка продолжается" else if (trip.status == "interrupted") "Завершена с разрывом данных" else "Завершена"
+                                val state = when {
+                                    trip.endedAtMs != null && trip.status == "interrupted" -> "Завершена с разрывом данных"
+                                    trip.endedAtMs != null -> "Завершена"
+                                    trip.status == "charging" -> "Ожидание во время подключённой зарядки"
+                                    trip.status == "waiting_after_charge" -> "Окно возобновления после зарядки"
+                                    trip.status == "waiting_ready_off" -> "Ожидание завершения (READY OFF)"
+                                    else -> "Поездка продолжается"
+                                }
                                 MetricCard(
                                     date,
                                     "${"%.1f".format(trip.distanceKm)} км",
@@ -205,6 +309,9 @@ private fun TelemetryProApp(
         }
     }
 }
+
+private fun selectedIndexInGap(samples: List<SocSample>, index: Int): Boolean =
+    index > 0 && index < samples.size && samples[index].gapBefore
 
 @Composable
 private fun MetricCard(title: String, value: String, detail: String) {

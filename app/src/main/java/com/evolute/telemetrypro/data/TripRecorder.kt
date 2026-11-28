@@ -1,50 +1,178 @@
 package com.evolute.telemetrypro.data
 
 /**
- * Builds trip records from already-collected local telemetry.
- * A trip starts only after at least 0.2 km of forward odometer movement.
- * It ends only after ignition is explicitly off and the vehicle has remained stationary for 5 minutes.
+ * Reconstructs trips from 30-second telemetry snapshots.
+ * READY is the driving-state signal; the charge-port sensor is treated as the
+ * start of a charging session, including delayed sessions.
  */
 class TripRecorder {
     fun record(db: SnapshotDb, telemetry: ApiClient.Telemetry, charging: Boolean, now: Long) {
-        val history = db.recentSamples(12)
+        val history = db.recentTripSamples(25)
         val previous = history.lastOrNull()
+        val lat = coordinate(telemetry.sensors["lat"], -90.0, 90.0)
+        val lon = coordinate(telemetry.sensors["lon"], -180.0, 180.0)
+        val current = TripSample(now, telemetry.soc, telemetry.odometer, telemetry.ready, charging, lat, lon)
         val active = db.activeTrip()
-        val lat = telemetry.sensors["lat"]?.toDoubleOrNull()?.takeIf { it.isFinite() && it in -90.0..90.0 }
-        val lon = telemetry.sensors["lon"]?.toDoubleOrNull()?.takeIf { it.isFinite() && it in -180.0..180.0 }
-        val ignitionOn = when (telemetry.sensors["isIgnitionOn"]?.lowercase()) {
-            "true", "1" -> true
-            "false", "0" -> false
-            else -> null
-        }
 
         if (active == null) {
-            if (charging || history.size < 2) return
-            val baseline = history.firstOrNull { now - it.capturedAtMillis in 0..600_000L } ?: return
-            val distance = telemetry.odometer - baseline.odometerKm
-            if (distance >= 0.2 && distance <= 5.0) {
-                db.startTrip(baseline.capturedAtMillis, baseline.odometerKm, baseline.socPercent, null, null)
+            if (!telemetry.ready || charging || previous == null) return
+            // Keep the latest eligible position as the anchor when the
+            // current point first crosses 500 m. If two displaced snapshots
+            // are already present, step back to the last point before that run.
+            val gpsHistory = history.filter {
+                it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS &&
+                    it.lat != null && it.lon != null
+            }
+            val previousGps = gpsHistory.lastOrNull()
+            val gpsBaseline = if (previousGps == null || lat == null || lon == null) null else {
+                if (distanceMeters(previousGps.lat!!, previousGps.lon!!, lat, lon) >= GPS_MOVEMENT_METERS) {
+                    previousGps
+                } else {
+                    gpsHistory.dropLast(1).lastOrNull {
+                        distanceMeters(it.lat!!, it.lon!!, previousGps.lat!!, previousGps.lon!!) >= GPS_MOVEMENT_METERS
+                    }
+                }
+            }
+            val odometerBaseline = previous.takeIf {
+                it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS
+            }
+            val odometerMoved = odometerBaseline != null &&
+                telemetry.odometer - odometerBaseline.odometerKm >= ODOMETER_EPSILON_KM
+            val gpsMoved = gpsBaseline != null &&
+                confirmedGpsDisplacement(history, current, gpsBaseline.lat, gpsBaseline.lon)
+            val start = if (odometerMoved) odometerBaseline else if (gpsMoved) gpsBaseline else null
+            if (start != null) {
+                db.startTrip(start.capturedAtMs, start.odometerKm, start.soc, start.lat, start.lon)
             }
             return
         }
 
-        val lastMovement = when {
-            previous == null -> active.lastMovementMs
-            telemetry.odometer - previous.odometerKm in 0.05..5.0 -> now
-            else -> active.lastMovementMs
+        val previousOdometer = previous?.odometerKm ?: active.endOdometer
+        val odometerDelta = telemetry.odometer - previousOdometer
+        val odometerMoved = odometerDelta >= ODOMETER_EPSILON_KM
+        var gpsReferenceLat = active.gpsReferenceLat ?: active.endLat
+        var gpsReferenceLon = active.gpsReferenceLon ?: active.endLon
+        if (gpsReferenceLat == null || gpsReferenceLon == null) {
+            gpsReferenceLat = lat
+            gpsReferenceLon = lon
+        }
+        val gpsMoved = confirmedGpsDisplacement(history, current, gpsReferenceLat, gpsReferenceLon)
+        val moved = telemetry.ready && !charging && (odometerMoved || gpsMoved)
+        val lastMovement = if (moved) now else active.lastMovementMs
+        if (gpsMoved && lat != null && lon != null) {
+            gpsReferenceLat = lat
+            gpsReferenceLon = lon
         }
 
-        if (previous != null && telemetry.odometer < previous.odometerKm - 0.1) {
-            db.finishTrip(active.id, now, "interrupted")
+        // Plug insertion takes precedence over READY-off timeout, even when
+        // the charging session itself is scheduled to start later.
+        if (charging) {
+            db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+                lastMovement, "charging", active.readyOffSinceMs, null, gpsReferenceLat, gpsReferenceLon)
             return
         }
 
-        db.updateTrip(active.id, telemetry.odometer, telemetry.soc, lat, lon, lastMovement)
-
-        if (ignitionOn == false && !charging && now - lastMovement >= STOP_TIMEOUT_MS) {
-            db.finishTrip(active.id, now, "completed")
+        // A plugged-in session has ended. Give the same trip 15 minutes to resume.
+        if (active.status == "charging") {
+            db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+                lastMovement, "waiting_after_charge", null, now, gpsReferenceLat, gpsReferenceLon)
+            return
         }
+
+        val unpluggedAt = active.chargingUnpluggedMs
+        if (unpluggedAt != null) {
+            if (now - unpluggedAt >= AFTER_CHARGE_RESUME_MS) {
+                db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+                    active.lastMovementMs, active.status, null, unpluggedAt, gpsReferenceLat, gpsReferenceLon)
+                db.finishTrip(active.id, unpluggedAt + AFTER_CHARGE_RESUME_MS)
+                return
+            }
+            if (moved) {
+                db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+                    now, "active", null, null, gpsReferenceLat, gpsReferenceLon)
+            } else {
+                db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+                    active.lastMovementMs, "waiting_after_charge", null, unpluggedAt,
+                    gpsReferenceLat, gpsReferenceLon)
+            }
+            return
+        }
+
+        val readyOffAt = active.readyOffSinceMs
+        if (!telemetry.ready) {
+            val offSince = readyOffAt ?: now
+            if (now - offSince >= READY_OFF_CLOSE_MS) {
+                db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+                    active.lastMovementMs, "waiting_ready_off", offSince, null,
+                    gpsReferenceLat, gpsReferenceLon)
+                db.finishTrip(active.id, offSince + READY_OFF_CLOSE_MS)
+            } else {
+                db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+                    active.lastMovementMs, "waiting_ready_off", offSince, null,
+                    gpsReferenceLat, gpsReferenceLon)
+            }
+            return
+        }
+
+        // READY returned before the 10-minute deadline: keep the same trip,
+        // but only treat it as resumed once movement is confirmed.
+        if (readyOffAt != null && now - readyOffAt >= READY_OFF_CLOSE_MS) {
+            db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+                active.lastMovementMs, "waiting_ready_off", readyOffAt, null,
+                gpsReferenceLat, gpsReferenceLon)
+            db.finishTrip(active.id, readyOffAt + READY_OFF_CLOSE_MS)
+            return
+        }
+        val nextStatus = if (moved || readyOffAt == null) "active" else "waiting_ready_off"
+        db.updateTripState(active.id, telemetry.odometer, telemetry.soc, lat, lon,
+            lastMovement, nextStatus, if (moved) null else readyOffAt, null,
+            gpsReferenceLat, gpsReferenceLon)
     }
 
-    companion object { private const val STOP_TIMEOUT_MS = 5 * 60 * 1000L }
+    private fun confirmedGpsDisplacement(
+        history: List<TripSample>,
+        current: TripSample,
+        anchorLat: Double?,
+        anchorLon: Double?
+    ): Boolean {
+        // GPS is only evidence of driving when both consecutive snapshots were
+        // captured with READY ON and the charge port unplugged. A single jump,
+        // stale coordinate, or movement recorded while parked/charging is ignored.
+        if (!current.ready || current.charging ||
+            anchorLat == null || anchorLon == null || current.lat == null || current.lon == null
+        ) return false
+
+        val previous = history.lastOrNull() ?: return false
+        if (!previous.ready || previous.charging ||
+            previous.lat == null || previous.lon == null ||
+            current.capturedAtMs - previous.capturedAtMs !in 0..MAX_GPS_SAMPLE_GAP_MS
+        ) return false
+
+        val previousDisplacement = distanceMeters(anchorLat, anchorLon, previous.lat, previous.lon)
+        val currentDisplacement = distanceMeters(anchorLat, anchorLon, current.lat, current.lon)
+        return previousDisplacement >= GPS_MOVEMENT_METERS &&
+            currentDisplacement >= GPS_MOVEMENT_METERS
+    }
+
+    private fun coordinate(raw: String?, min: Double, max: Double): Double? =
+        raw?.toDoubleOrNull()?.takeIf { it.isFinite() && it in min..max }
+
+    private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadius = 6_371_000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+            kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+            kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+        return earthRadius * 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+    }
+
+    companion object {
+        private const val START_LOOKBACK_MS = 10 * 60 * 1000L
+        private const val MAX_GPS_SAMPLE_GAP_MS = 2 * 60 * 1000L
+        private const val GPS_MOVEMENT_METERS = 500.0
+        private const val ODOMETER_EPSILON_KM = 0.001
+        private const val READY_OFF_CLOSE_MS = 10 * 60 * 1000L
+        private const val AFTER_CHARGE_RESUME_MS = 15 * 60 * 1000L
+    }
 }

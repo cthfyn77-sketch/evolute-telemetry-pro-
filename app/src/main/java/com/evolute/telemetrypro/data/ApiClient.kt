@@ -122,11 +122,12 @@ class ApiClient(private val tokens: TokenStore) {
         }
         val soc = number("batteryPercentage")?.takeIf { it <= 100.0 } ?: throw IOException("SOC недоступен")
         val odo = number("odometer") ?: throw IOException("Одометр недоступен")
-        val names = listOf("batteryTemp", "12VBatteryVoltage", "inBoardTemp", "outsideTemp",
-            "remainsBatteryMileage", "isIgnitionOn", "isParkedOn", "isCentralLockingOn",
-            "isChargingGunInserted", "signalLevel", "course", "lat", "lon")
-        val safe = names.mapNotNull { key ->
-            sensors.opt(key)?.takeUnless { it == JSONObject.NULL }?.let { key to it.toString() }
+        // Preserve every non-null sensor returned by the vehicle API.
+        // This keeps newly exposed vehicle fields available to the charging-state detector and UI.
+        val safe = sensors.keys().asSequence().mapNotNull { key ->
+            sensors.opt(key)?.takeUnless { it == JSONObject.NULL }?.let { value ->
+                key to value.toString()
+            }
         }.toMap()
         return Telemetry(soc, odo, number("remainsBatteryMileage"),
             j.optBoolean("isOnline"), j.optBoolean("isCarStateReady"),
