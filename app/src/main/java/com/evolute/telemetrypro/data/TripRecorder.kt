@@ -16,9 +16,10 @@ class TripRecorder {
 
         if (active == null) {
             if (!telemetry.ready || charging || previous == null) return
-            val gpsBaseline = history.firstOrNull {
+            val gpsBaseline = history.lastOrNull {
                 it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS &&
-                    it.lat != null && it.lon != null
+                    it.lat != null && it.lon != null && lat != null && lon != null &&
+                    distanceMeters(it.lat, it.lon, lat, lon) >= GPS_MOVEMENT_METERS
             }
             val odometerBaseline = previous.takeIf {
                 it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS
