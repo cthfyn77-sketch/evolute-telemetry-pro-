@@ -10,7 +10,7 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class TripRecorderTest {
     @Test fun resumesSameTripAfterReadyOffAndDelayedChargingSession() {
-        val context = RuntimeEnvironment.getApplication<Application>()
+        val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("evolute_telemetry_pro.sqlite")
         val db = SnapshotDb.get(context)
         val recorder = TripRecorder()
