@@ -75,7 +75,6 @@ private fun TelemetryProApp(
 ) {
     val scope = rememberCoroutineScope()
     var phone by remember { mutableStateOf("") }
-    var country by remember { mutableStateOf("RU") }
     var code by remember { mutableStateOf("") }
     var session by remember { mutableStateOf(hasSession) }
     var busy by remember { mutableStateOf(false) }
@@ -119,12 +118,11 @@ private fun TelemetryProApp(
                     Column(Modifier.padding(16.dp)) {
                         Text("Авторизация Evolute", color = Cyan, fontSize = 18.sp)
                         OutlinedTextField(phone, { phone = it.filter(Char::isDigit).take(15) }, label = { Text("Телефон с кодом страны") }, singleLine = true)
-                        OutlinedTextField(country, { country = it.take(2).uppercase() }, label = { Text("Код страны") }, singleLine = true)
                         Button(enabled = !busy, onClick = {
                             busy = true
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { onRequestCode(phone, country) }
+                                    withContext(Dispatchers.IO) { onRequestCode(phone, "RU") }
                                     smsSent = true; status = "SMS-код запрошен"
                                 } catch (e: Exception) { status = e.message ?: "Не удалось запросить код" }
                                 finally { busy = false }
