@@ -137,7 +137,7 @@ private fun TelemetryProApp(
     onBatteryHistory: suspend (Long?) -> BatteryHistoryAnalyzer.Report
 ) {
     val scope = rememberCoroutineScope()
-    var bridgeToken by rememberSaveable { mutableStateOf("") }
+    var bridgeToken by remember { mutableStateOf("") }
     var session by remember { mutableStateOf(hasSession) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(if (hasSession) "MCP bridge подключён" else "Подключите локальный evaconnect-mcp bridge") }
@@ -196,7 +196,7 @@ private fun TelemetryProApp(
                 val available = withContext(Dispatchers.IO) { onSessionAvailable() }
                 if (!available) {
                     session = false
-                    status = "Сессия истекла • войдите в аккаунт заново"
+                    status = "Ключ MCP bridge недоступен • подключите bridge заново"
                     break
                 }
                 refresh()
@@ -288,6 +288,7 @@ private fun TelemetryProApp(
                                 try {
                                     withContext(Dispatchers.IO) { onLogin(bridgeToken) }
                                     session = true
+                                    bridgeToken = ""
                                     status = "Ключ сохранён в Android Keystore • сбор через MCP запущен"
                                 } catch (e: Exception) { status = e.message ?: "Не удалось подключить MCP bridge" }
                                 finally { busy = false }
@@ -523,7 +524,7 @@ private fun TelemetryProApp(
                     Text(diagnostics, color = Muted, fontSize = 11.sp)
                 }
             }
-            Text("Только чтение через API Evolute • сессия зашифрована Android Keystore • снимки хранятся локально", color = Muted, fontSize = 11.sp)
+            Text("Только чтение через evaconnect-mcp • ключ зашифрован Android Keystore • снимки хранятся локально", color = Muted, fontSize = 11.sp)
         }
     }
 }
