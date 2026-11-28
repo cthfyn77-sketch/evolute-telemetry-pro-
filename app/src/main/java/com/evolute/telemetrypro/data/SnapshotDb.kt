@@ -257,8 +257,22 @@ class SnapshotDb private constructor(context: Context) :
             if (state in setOf("charging", "active", "in_progress", "in progress", "fast_charging", "slow_charging")) return true
             if (state in setOf("idle", "stopped", "complete", "completed", "not_charging", "not charging", "disconnected")) return false
         }
+        // Also recognize provider-specific names, while explicitly excluding the cable sensor.
+        val dynamicState = sensors.entries.firstOrNull { (key, _) ->
+            val normalized = key.lowercase()
+            normalized != "ischargingguninserted" &&
+                (normalized.contains("charging") || normalized.contains("charge")) &&
+                (normalized.contains("state") || normalized.contains("status") || normalized.contains("active"))
+        }?.let { (key, _) -> sensorBoolean(sensors, listOf(key)) }
+        if (dynamicState != null) return dynamicState
+        val powerKeys = sensors.keys.filter { key ->
+            val normalized = key.lowercase()
+            normalized != "ischargingguninserted" &&
+                (normalized.contains("charge") || normalized.contains("charging")) &&
+                (normalized.contains("power") || normalized.contains("current"))
+        }
         val power = sensorNumber(sensors, listOf("chargingPower", "chargePower", "batteryChargingPower",
-            "dcChargingPower", "acChargingPower", "chargerPower", "chargingCurrent", "chargeCurrent"))
+            "dcChargingPower", "acChargingPower", "chargerPower", "chargingCurrent", "chargeCurrent") + powerKeys)
         return power?.let { it > 0.0 }
     }
 
