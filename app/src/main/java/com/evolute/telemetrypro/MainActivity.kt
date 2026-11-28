@@ -311,7 +311,7 @@ private fun TelemetryProApp(
 }
 
 private fun selectedIndexInGap(samples: List<SocSample>, index: Int): Boolean =
-    index > 0 && index < samples.size && samples[index].capturedAtMs - samples[index - 1].capturedAtMs > 90_000L
+    index > 0 && index < samples.size && samples[index].gapBefore
 
 @Composable
 private fun MetricCard(title: String, value: String, detail: String) {
