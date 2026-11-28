@@ -10,7 +10,6 @@ import asyncio
 import json
 import os
 import secrets
-import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -20,6 +19,7 @@ from mcp.client.stdio import stdio_client
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("EVOLUTE_MCP_BRIDGE_PORT", "8765"))
+MCP_TIMEOUT_SECONDS = float(os.environ.get("EVOLUTE_MCP_TIMEOUT_SECONDS", "18"))
 TOKEN_FILE = Path(os.environ.get(
     "EVOLUTE_MCP_BRIDGE_TOKEN_FILE",
     str(Path.home() / ".config/evolute/bridge-token")
@@ -45,27 +45,51 @@ def load_or_create_token() -> str:
 
 
 async def call_mcp_tool(name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call the real MCP stdio server; never fall back to direct HTTP APIs."""
     params = StdioServerParameters(
         command=MCP_COMMAND,
         args=[],
         env=os.environ.copy(),
     )
-    async with stdio_client(params) as (read_stream, write_stream):
-        async with ClientSession(read_stream, write_stream) as session:
-            await session.initialize()
-            result = await session.call_tool(name, arguments or {})
-            if getattr(result, "isError", False):
-                raise RuntimeError("MCP tool returned an error")
-            texts = [item.text for item in result.content if getattr(item, "type", None) == "text"]
-            if not texts:
-                return {"content": []}
-            parsed = []
-            for item in texts:
-                try:
-                    parsed.append(json.loads(item))
-                except json.JSONDecodeError:
-                    parsed.append(item)
-            return parsed[0] if len(parsed) == 1 else {"content": parsed}
+
+    async def invoke() -> dict[str, Any]:
+        async with stdio_client(params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(name, arguments or {})
+                if getattr(result, "isError", False):
+                    raise RuntimeError("MCP tool returned an error")
+
+                structured = getattr(result, "structuredContent", None)
+                if isinstance(structured, dict):
+                    return structured
+
+                text_blocks = [
+                    item.text for item in result.content
+                    if getattr(item, "type", None) == "text"
+                ]
+                if not text_blocks:
+                    raise RuntimeError("MCP tool returned no status content")
+
+                parsed: list[dict[str, Any]] = []
+                for block in text_blocks:
+                    value = json.loads(block)
+                    if not isinstance(value, dict):
+                        raise RuntimeError("MCP status content is not a JSON object")
+                    parsed.append(value)
+
+                if len(parsed) == 1:
+                    return parsed[0]
+
+                merged: dict[str, Any] = {}
+                for value in parsed:
+                    overlap = merged.keys() & value.keys()
+                    if overlap:
+                        raise RuntimeError("MCP returned ambiguous status fields")
+                    merged.update(value)
+                return merged
+
+    return await asyncio.wait_for(invoke(), timeout=MCP_TIMEOUT_SECONDS)
 
 
 def run_tool(name: str) -> dict[str, Any]:
@@ -101,7 +125,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.send_json(200, run_tool("evolute_status"))
         except Exception as exc:
-            self.send_json(502, {"error": "mcp_unavailable", "detail": str(exc)[:160]})
+            # Exception text can contain subprocess diagnostics; expose only its type.
+            self.send_json(502, {"error": "mcp_unavailable", "detail": type(exc).__name__})
 
     def do_POST(self) -> None:
         # This bridge intentionally exposes no vehicle-control or write tools.
