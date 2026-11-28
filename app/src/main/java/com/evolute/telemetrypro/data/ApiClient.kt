@@ -289,7 +289,7 @@ class ApiClient(private val tokens: TokenStore) {
 
     companion object {
         private val REFRESH_LOCK = Any()
-        private val TERMINAL_REFRESH_CODES = setOf(400, 401, 403)
+        internal val TERMINAL_REFRESH_CODES = setOf(400, 401, 403)
     }
 }
 
