@@ -33,6 +33,7 @@ class CollectorService : Service() {
             val tokens = KeystoreTokenStore(this@CollectorService)
             val api = ApiClient(tokens)
             if (runCatching { tokens.get() != null }.getOrDefault(false).not()) {
+                CollectionDiagnostics.record(this@CollectorService, "Нет сохранённой сессии")
                 updateNotification("Войдите в аккаунт Evolute")
                 stopSelf(startId)
                 return@launch
@@ -68,15 +69,16 @@ class CollectorService : Service() {
                         updateNotification("Снимок записан • автомобиль офлайн")
                     }
                 } catch (e: AuthenticationRequiredException) {
-                    CollectionDiagnostics.record(this@CollectorService, "Авторизация: сессия истекла", false)\n                    updateNotification("Сессия Evolute истекла • войдите в аккаунт заново")
+                    CollectionDiagnostics.record(this@CollectorService, "Авторизация: сессия истекла", false)
+                    updateNotification("Сессия Evolute истекла • войдите в аккаунт заново")
                     stopSelf()
                     return@launch
                 } catch (e: Exception) {
                     consecutiveFailures = CollectorRetryBackoff.nextFailureCount(consecutiveFailures)
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
-                    val reason = e.message?.replace(Regex("[\\r
-\\t]+"), " ")?.take(110) ?: "ошибка API"
-                    CollectionDiagnostics.record(this@CollectorService, reason, false)\n                    updateNotification("Сбор не выполнен • повтор через ${nextDelayMs / 1000} с • $reason")
+                    val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(110) ?: "ошибка API"
+                    CollectionDiagnostics.record(this@CollectorService, reason, false)
+                    updateNotification("Сбор не выполнен • повтор через ${nextDelayMs / 1000} с • $reason")
                 }
                 delay(nextDelayMs)
             }
