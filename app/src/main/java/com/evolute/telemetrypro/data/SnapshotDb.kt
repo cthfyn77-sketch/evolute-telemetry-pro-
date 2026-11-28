@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.time.Instant
 
 class SnapshotDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 4) {
+    SQLiteOpenHelper(context.applicationContext, "evolute_telemetry_pro.sqlite", null, 5) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE samples(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +38,7 @@ class SnapshotDb private constructor(context: Context) :
             db.execSQL("ALTER TABLE trips ADD COLUMN gps_reference_lon REAL")
         }
         if (oldVersion < 4) createChargingSessionsTable(db)
+        if (oldVersion < 5) upgradeChargingSessions(db)
     }
 
     private fun createChargingSessionsTable(db: SQLiteDatabase) {
@@ -46,9 +47,19 @@ class SnapshotDb private constructor(context: Context) :
             started_at_ms INTEGER NOT NULL,
             ended_at_ms INTEGER,
             start_soc REAL,
-            end_soc REAL
+            end_soc REAL,
+            energy_started_at_ms INTEGER,
+            energy_stopped_at_ms INTEGER,
+            cable_removed_at_ms INTEGER,
+            cable_inserted_soc REAL,
+            soc_before_energy REAL,
+            soc_after_energy REAL,
+            battery_temp_before REAL,
+            battery_temp_after REAL,
+            has_energy_state_sensor INTEGER NOT NULL DEFAULT 0
         )""")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_charging_started ON charging_sessions(started_at_ms DESC)")
+        createChargingIntervalsTable(db)
     }
 
     private fun createTripsTable(db: SQLiteDatabase) {
@@ -173,7 +184,7 @@ class SnapshotDb private constructor(context: Context) :
 
     @Synchronized fun insert(t: ApiClient.Telemetry, charging: Boolean = false) {
         val now = System.currentTimeMillis()
-        recordChargingBoundary(now, t.soc, charging)
+        recordChargingSession(now, t, charging)
         val values = ContentValues().apply {
             put("captured_at", Instant.ofEpochMilli(now).toString())
             put("captured_ms", now)
@@ -187,38 +198,183 @@ class SnapshotDb private constructor(context: Context) :
     }
 
 
-    @Synchronized private fun recordChargingBoundary(at: Long, soc: Double, charging: Boolean) {
-        val activeId = readableDatabase.rawQuery(
-            "SELECT id FROM charging_sessions WHERE ended_at_ms IS NULL ORDER BY id DESC LIMIT 1", null
+    private fun createChargingIntervalsTable(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS charging_intervals(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            started_at_ms INTEGER NOT NULL,
+            ended_at_ms INTEGER,
+            FOREIGN KEY(session_id) REFERENCES charging_sessions(id) ON DELETE CASCADE
+        )""")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_charging_intervals_session ON charging_intervals(session_id, started_at_ms)")
+    }
+
+    private fun upgradeChargingSessions(db: SQLiteDatabase) {
+        val additions = listOf(
+            "energy_started_at_ms INTEGER", "energy_stopped_at_ms INTEGER", "cable_removed_at_ms INTEGER",
+            "cable_inserted_soc REAL", "soc_before_energy REAL", "soc_after_energy REAL",
+            "battery_temp_before REAL", "battery_temp_after REAL",
+            "has_energy_state_sensor INTEGER NOT NULL DEFAULT 0"
+        )
+        additions.forEach { definition ->
+            val column = definition.substringBefore(' ')
+            val exists = db.rawQuery("PRAGMA table_info(charging_sessions)", null).use { c ->
+                var found = false
+                while (c.moveToNext()) if (c.getString(1) == column) found = true
+                found
+            }
+            if (!exists) db.execSQL("ALTER TABLE charging_sessions ADD COLUMN $definition")
+        }
+        // Keep legacy timestamps intact while marking old sessions as lacking energy-state telemetry.
+        db.execSQL("UPDATE charging_sessions SET cable_removed_at_ms=ended_at_ms, cable_inserted_soc=start_soc, soc_after_energy=end_soc WHERE cable_removed_at_ms IS NULL AND ended_at_ms IS NOT NULL")
+        db.execSQL("UPDATE charging_sessions SET has_energy_state_sensor=0")
+        createChargingIntervalsTable(db)
+    }
+
+    private fun sensorNumber(sensors: Map<String, String>, keys: List<String>): Double? =
+        keys.firstNotNullOfOrNull { key -> sensors[key]?.toDoubleOrNull()?.takeIf { it.isFinite() } }
+
+    private fun sensorBoolean(sensors: Map<String, String>, keys: List<String>): Boolean? =
+        keys.firstNotNullOfOrNull { key ->
+            sensors[key]?.trim()?.lowercase()?.let { value ->
+                when (value) {
+                    "true", "1", "yes", "on", "charging", "active" -> true
+                    "false", "0", "no", "off", "idle", "not_charging", "not charging" -> false
+                    else -> null
+                }
+            }
+        }
+
+    /** Null means no recognized, explicit energy-transfer state was present in this snapshot. */
+    private fun energyTransferState(sensors: Map<String, String>): Boolean? {
+        sensorBoolean(sensors, listOf("isCharging", "chargingActive", "isChargeActive",
+            "isBatteryCharging", "chargeInProgress", "isChargingActive"))?.let { return it }
+        val state = sensors.entries.firstOrNull {
+            it.key.equals("chargingStatus", true) || it.key.equals("chargeStatus", true) ||
+                it.key.equals("chargingState", true) || it.key.equals("chargeState", true)
+        }?.value?.trim()?.lowercase()
+        if (state != null) {
+            if (state in setOf("charging", "active", "in_progress", "in progress", "fast_charging", "slow_charging")) return true
+            if (state in setOf("idle", "stopped", "complete", "completed", "not_charging", "not charging", "disconnected")) return false
+        }
+        val power = sensorNumber(sensors, listOf("chargingPower", "chargePower", "batteryChargingPower",
+            "dcChargingPower", "acChargingPower", "chargerPower", "chargingCurrent", "chargeCurrent"))
+        return power?.let { it > 0.0 }
+    }
+
+    private fun validSoc(value: Double): Double? = value.takeIf { it.isFinite() && it in 0.0..100.0 }
+
+    @Synchronized private fun recordChargingSession(at: Long, telemetry: ApiClient.Telemetry, plugInserted: Boolean) {
+        val db = writableDatabase
+        val sensors = telemetry.sensors
+        val energyState = energyTransferState(sensors)
+        val temp = sensorNumber(sensors, listOf("batteryTemp", "batteryTemperature", "tractionBatteryTemp"))
+        val soc = validSoc(telemetry.soc)
+        var sessionId = db.rawQuery(
+            "SELECT id FROM charging_sessions WHERE cable_removed_at_ms IS NULL ORDER BY id DESC LIMIT 1", null
         ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
-        if (charging && activeId == null) {
+
+        if (plugInserted && sessionId == null) {
             val values = ContentValues().apply {
                 put("started_at_ms", at)
-                if (soc.isFinite() && soc in 0.0..100.0) put("start_soc", soc) else putNull("start_soc")
-                putNull("ended_at_ms"); putNull("end_soc")
+                putNull("ended_at_ms")
+                if (soc == null) putNull("start_soc") else put("start_soc", soc)
+                putNull("end_soc")
+                if (soc == null) putNull("cable_inserted_soc") else put("cable_inserted_soc", soc)
+                put("has_energy_state_sensor", if (energyState != null) 1 else 0)
             }
-            writableDatabase.insertOrThrow("charging_sessions", null, values)
-        } else if (!charging && activeId != null) {
+            sessionId = db.insertOrThrow("charging_sessions", null, values)
+        }
+        if (sessionId == null) return
+
+        if (energyState != null) {
+            db.execSQL("UPDATE charging_sessions SET has_energy_state_sensor=1 WHERE id=?", arrayOf(sessionId))
+        }
+        val openInterval = db.rawQuery(
+            "SELECT id FROM charging_intervals WHERE session_id=? AND ended_at_ms IS NULL ORDER BY id DESC LIMIT 1",
+            arrayOf(sessionId.toString())
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+
+        if (plugInserted && energyState == true && openInterval == null) {
+            val hasStarted = db.rawQuery(
+                "SELECT energy_started_at_ms FROM charging_sessions WHERE id=?", arrayOf(sessionId.toString())
+            ).use { c -> c.moveToFirst() && !c.isNull(0) }
             val values = ContentValues().apply {
-                put("ended_at_ms", at)
-                if (soc.isFinite() && soc in 0.0..100.0) put("end_soc", soc) else putNull("end_soc")
+                if (!hasStarted) {
+                    put("energy_started_at_ms", at)
+                    if (soc == null) putNull("soc_before_energy") else put("soc_before_energy", soc)
+                    if (temp == null) putNull("battery_temp_before") else put("battery_temp_before", temp)
+                }
+                // A resumed transfer clears the previous pause boundary; it is still the same cable session.
+                putNull("energy_stopped_at_ms")
+                putNull("soc_after_energy")
+                putNull("battery_temp_after")
             }
-            writableDatabase.update("charging_sessions", values, "id=? AND ended_at_ms IS NULL", arrayOf(activeId.toString()))
+            db.update("charging_sessions", values, "id=?", arrayOf(sessionId.toString()))
+            db.insertOrThrow("charging_intervals", null, ContentValues().apply {
+                put("session_id", sessionId); put("started_at_ms", at); putNull("ended_at_ms")
+            })
+        } else if (energyState == false && openInterval != null) {
+            db.update("charging_intervals", ContentValues().apply { put("ended_at_ms", at) },
+                "id=?", arrayOf(openInterval.toString()))
+            db.update("charging_sessions", ContentValues().apply {
+                put("energy_stopped_at_ms", at)
+                if (soc == null) putNull("soc_after_energy") else put("soc_after_energy", soc)
+                if (temp == null) putNull("battery_temp_after") else put("battery_temp_after", temp)
+            }, "id=?", arrayOf(sessionId.toString()))
+        }
+
+        if (!plugInserted) {
+            if (openInterval != null) {
+                db.update("charging_intervals", ContentValues().apply { put("ended_at_ms", at) },
+                    "id=?", arrayOf(openInterval.toString()))
+                db.update("charging_sessions", ContentValues().apply {
+                    put("energy_stopped_at_ms", at)
+                    if (soc == null) putNull("soc_after_energy") else put("soc_after_energy", soc)
+                    if (temp == null) putNull("battery_temp_after") else put("battery_temp_after", temp)
+                }, "id=?", arrayOf(sessionId.toString()))
+            }
+            val transferStarted = db.rawQuery(
+                "SELECT energy_started_at_ms FROM charging_sessions WHERE id=?", arrayOf(sessionId.toString())
+            ).use { c -> c.moveToFirst() && !c.isNull(0) }
+            val insertedSoc = db.rawQuery(
+                "SELECT cable_inserted_soc FROM charging_sessions WHERE id=?", arrayOf(sessionId.toString())
+            ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getDouble(0) else null }
+            db.update("charging_sessions", ContentValues().apply {
+                put("cable_removed_at_ms", at); put("ended_at_ms", at)
+                if (soc == null) putNull("end_soc") else put("end_soc", soc)
+                if (!transferStarted) {
+                    if (insertedSoc == null) putNull("soc_after_energy") else put("soc_after_energy", insertedSoc)
+                }
+            }, "id=? AND cable_removed_at_ms IS NULL", arrayOf(sessionId.toString()))
         }
     }
 
     fun recentChargingSessions(limit: Int = 50): List<ChargingSession> =
         readableDatabase.rawQuery(
-            "SELECT id,started_at_ms,ended_at_ms,start_soc,end_soc FROM charging_sessions ORDER BY started_at_ms DESC LIMIT ?",
+            """SELECT s.id,s.started_at_ms,s.energy_started_at_ms,s.energy_stopped_at_ms,
+               s.cable_removed_at_ms,s.cable_inserted_soc,s.soc_before_energy,s.soc_after_energy,
+               s.battery_temp_before,s.battery_temp_after,s.has_energy_state_sensor,
+               COALESCE((SELECT SUM(MAX(0, COALESCE(i.ended_at_ms, s.energy_stopped_at_ms, s.started_at_ms) - i.started_at_ms))
+                 FROM charging_intervals i WHERE i.session_id=s.id),0)
+               FROM charging_sessions s ORDER BY s.started_at_ms DESC LIMIT ?""",
             arrayOf(limit.toString())
         ).use { c ->
             val result = ArrayList<ChargingSession>()
             while (c.moveToNext()) {
-                val started = c.getLong(1)
-                val ended = if (c.isNull(2)) null else c.getLong(2)
-                val startSoc = if (c.isNull(3)) null else c.getDouble(3)
-                val endSoc = if (c.isNull(4)) null else c.getDouble(4)
-                result.add(ChargingSession(c.getLong(0), started, ended, startSoc, endSoc))
+                result.add(ChargingSession(
+                    id=c.getLong(0), cableInsertedAtMs=c.getLong(1),
+                    energyStartedAtMs=if (c.isNull(2)) null else c.getLong(2),
+                    energyStoppedAtMs=if (c.isNull(3)) null else c.getLong(3),
+                    cableRemovedAtMs=if (c.isNull(4)) null else c.getLong(4),
+                    cableInsertedSoc=if (c.isNull(5)) null else c.getDouble(5),
+                    socBeforeEnergy=if (c.isNull(6)) null else c.getDouble(6),
+                    socAfterEnergy=if (c.isNull(7)) null else c.getDouble(7),
+                    batteryTempBefore=if (c.isNull(8)) null else c.getDouble(8),
+                    batteryTempAfter=if (c.isNull(9)) null else c.getDouble(9),
+                    hasEnergyStateSensor=c.getInt(10) == 1,
+                    energyDurationMs=c.getLong(11)
+                ))
             }
             result
         }
