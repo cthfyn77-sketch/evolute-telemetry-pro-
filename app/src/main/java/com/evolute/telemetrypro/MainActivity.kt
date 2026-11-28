@@ -25,6 +25,7 @@ import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.TripRecord
+import com.evolute.telemetrypro.data.ChargingSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -56,6 +57,7 @@ class MainActivity : ComponentActivity() {
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
                 onTrips = { SnapshotDb.get(this).recentTrips(30) },
+                onChargingSessions = { SnapshotDb.get(this).recentChargingSessions(30) },
                 onRefresh = {
                     val db = SnapshotDb.get(this)
                     val latest = db.latest()
@@ -74,6 +76,7 @@ private fun TelemetryProApp(
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
     onTrips: suspend () -> List<TripRecord>,
+    onChargingSessions: suspend () -> List<ChargingSession>,
     onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
 ) {
     val scope = rememberCoroutineScope()
@@ -89,6 +92,7 @@ private fun TelemetryProApp(
     var count by remember { mutableLongStateOf(0L) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var trips by remember { mutableStateOf<List<TripRecord>>(emptyList()) }
+    var chargingSessions by remember { mutableStateOf<List<ChargingSession>>(emptyList()) }
 
     fun refresh() {
         scope.launch {
@@ -98,6 +102,7 @@ private fun TelemetryProApp(
                 count = result.second
                 estimate = result.third
                 trips = withContext(Dispatchers.IO) { onTrips() }
+                chargingSessions = withContext(Dispatchers.IO) { onChargingSessions() }
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Данные обновлены локально"
             } catch (e: Exception) { status = e.message ?: "Ошибка чтения данных" }
         }
@@ -173,7 +178,23 @@ private fun TelemetryProApp(
                         MetricCard("Одометр", snapshot?.let { "${"%.1f".format(it.odometer)} км" } ?: "—", "Штатный показатель автомобиля")
                         MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
                     }
-                    "Батарея" -> MetricCard("Батарея", snapshot?.let { "SOC ${it.soc}%" } ?: "Нет данных", "Снимков сохранено: $count • графики в следующем этапе")
+                    "Батарея" -> {
+                        MetricCard("Батарея", snapshot?.let { "SOC ${it.soc.toInt()}%" } ?: "Нет данных",
+                            "Снимков сохранено: $count • история подключений зарядного разъёма")
+                        MetricCard("Зарядные сессии", "${chargingSessions.size}", "Начало — подключение кабеля, окончание — отключение")
+                        if (chargingSessions.isEmpty()) {
+                            MetricCard("История пока пуста", "Ожидание подключения", "Сессия будет записана при первом обнаружении подключённого разъёма")
+                        } else {
+                            chargingSessions.forEach { charge ->
+                                val date = java.time.Instant.ofEpochMilli(charge.startedAtMs).toString().take(16).replace('T', ' ')
+                                val socStart = charge.startSoc?.let { "%.0f%%".format(it) } ?: "нет данных"
+                                val socEnd = charge.endSoc?.let { "%.0f%%".format(it) } ?: if (charge.endedAtMs == null) "идёт" else "нет данных"
+                                val gain = charge.socGain?.let { "${if (it >= 0) "+" else ""}${"%.1f".format(it)} п.п." } ?: "прирост не рассчитан"
+                                val duration = charge.durationMs?.let { "${it / 3_600_000} ч ${(it / 60_000) % 60} мин" } ?: "ещё подключён"
+                                MetricCard(date, "$socStart → $socEnd", "$gain • $duration")
+                            }
+                        }
+                    }
                     "Поездки" -> {
                         MetricCard("Журнал поездок", "${trips.size}", "Начало по READY и движению; GPS-подтверждение — 500 м")
                         if (trips.isEmpty()) {
