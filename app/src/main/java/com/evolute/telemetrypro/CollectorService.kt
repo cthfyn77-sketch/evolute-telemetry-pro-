@@ -11,6 +11,7 @@ import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.RangeEstimator
 import com.evolute.telemetrypro.data.SnapshotDb
+import com.evolute.telemetrypro.data.TripRecorder
 import kotlinx.coroutines.*
 
 class CollectorService : Service() {
@@ -29,6 +30,7 @@ class CollectorService : Service() {
         pollJob = scope.launch {
             val db = SnapshotDb.get(this@CollectorService)
             val estimator = RangeEstimator()
+            val tripRecorder = TripRecorder()
             db.recentSamples().forEach(estimator::add)
             val api = ApiClient(KeystoreTokenStore(this@CollectorService))
             while (isActive) {
@@ -37,6 +39,7 @@ class CollectorService : Service() {
                     val charging = data.sensors["isChargingGunInserted"]?.let {
                         it.equals("true", true) || it == "1"
                     } == true
+                    tripRecorder.record(db, data, charging, System.currentTimeMillis())
                     db.insert(data, charging)
                     estimator.add(RangeEstimator.Sample(data.odometer, data.soc, System.currentTimeMillis(), charging))
                     val range = estimator.estimate(data.soc, data.stockRange)
