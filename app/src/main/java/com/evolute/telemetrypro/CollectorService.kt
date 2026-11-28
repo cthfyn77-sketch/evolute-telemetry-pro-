@@ -50,6 +50,7 @@ class CollectorService : Service() {
                     val charging = data.sensors["isChargingGunInserted"]?.let {
                         it.equals("true", true) || it == "1"
                     } == true
+                    // A successful API response is not reported as collected until SQLite confirms the insert.
                     db.insert(data, charging)
                     consecutiveFailures = 0
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(0)
@@ -59,9 +60,11 @@ class CollectorService : Service() {
                         ))
                         val range = estimator.estimate(data.soc, data.stockRange)
                         val rangeText = range?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
-                        updateNotification("SOC ${data.soc.toInt()}% • опрос каждые 30 с$rangeText")
+                        updateNotification(
+                            "Записано • SOC ${data.soc.toInt()}% • одометр ${"%.1f".format(data.odometer)} км$rangeText"
+                        )
                     } else {
-                        updateNotification("Автомобиль офлайн • снимок сохранён; расчёт запаса приостановлен")
+                        updateNotification("Снимок записан • автомобиль офлайн")
                     }
                 } catch (e: AuthenticationRequiredException) {
                     updateNotification("Сессия Evolute истекла • войдите в аккаунт заново")
@@ -70,7 +73,8 @@ class CollectorService : Service() {
                 } catch (e: Exception) {
                     consecutiveFailures = CollectorRetryBackoff.nextFailureCount(consecutiveFailures)
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
-                    updateNotification("Нет свежих данных • повтор через ${nextDelayMs / 1000} с • ${e.message?.take(45) ?: "ошибка API"}")
+                    val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(110) ?: "ошибка API"
+                    updateNotification("Сбор не выполнен • повтор через ${nextDelayMs / 1000} с • $reason")
                 }
                 delay(nextDelayMs)
             }
