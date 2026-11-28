@@ -7,14 +7,16 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import com.evolute.telemetrypro.data.AuthenticationRequiredException
-import com.evolute.telemetrypro.data.BridgeConfigStore
-import com.evolute.telemetrypro.data.EvaconnectMcpClient
-import com.evolute.telemetrypro.data.RangeEstimator
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
+import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
+import com.evolute.telemetrypro.data.TelemetrySnapshot
 import kotlinx.coroutines.*
+import org.json.JSONObject
+import java.io.IOException
 
-/** Collects read-only snapshots exclusively through the local evaconnect-mcp bridge. */
+/** Vehicle connection and polling follow the verified build-152 EVACONNECT flow. */
 class CollectorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
@@ -24,100 +26,90 @@ class CollectorService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, notification("Подключение к EVACONNECT MCP"))
+        startForeground(NOTIFICATION_ID, notification("Ожидание подключения EVACONNECT"))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "STOP") {
+            pollJob?.cancel()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (pollJob?.isActive == true) return START_STICKY
+
         pollJob = scope.launch {
-            val bridgeToken = try {
-                BridgeConfigStore(this@CollectorService).get()
-            } catch (e: Exception) {
-                CollectionDiagnostics.record(this@CollectorService, e.message ?: "Ключ MCP bridge недоступен", false)
-                null
-            }
-            if (bridgeToken.isNullOrBlank()) {
-                CollectionDiagnostics.record(this@CollectorService, "MCP bridge не настроен", false)
-                updateNotification("Настройте ключ локального MCP bridge")
-                stopSelf(startId)
-                return@launch
-            }
+            val tokenStore = KeystoreTokenStore(this@CollectorService)
+            try {
+                if (!Python.isStarted()) Python.start(AndroidPlatform(applicationContext))
+                val bridge = Python.getInstance().getModule("evaconnect_bridge")
+                while (isActive) {
+                    try {
+                        val saved = tokenStore.get() ?: throw IOException("Сначала выполните вход по SMS")
+                        val raw = bridge.callAttr("fetch_telemetry", saved.access, saved.refresh).toString()
+                        val result = JSONObject(raw)
+                        val access = result.optString("access_token", saved.access).ifBlank { saved.access }
+                        val refresh = result.optString("refresh_token", saved.refresh).ifBlank { saved.refresh }
+                        if (access != saved.access || refresh != saved.refresh) {
+                            tokenStore.save(saved.copy(access = access, refresh = refresh))
+                        }
+                        if (!result.optBoolean("ok", false)) {
+                            throw IOException(result.optString("error", "EVACONNECT не вернул телеметрию"))
+                        }
 
-            val db = SnapshotDb.get(this@CollectorService)
-            val estimator = RangeEstimator()
-            db.recentSamples().forEach(estimator::add)
-            val mcp = EvaconnectMcpClient("http://127.0.0.1:8765", bridgeToken)
-            var consecutiveFailures = 0
-
-            while (isActive) {
-                var nextDelayMs = 30_000L
-                try {
-                    val data = mcp.fetchTelemetry()
-                    val charging = data.sensors["isChargingGunInserted"]?.let {
-                        it.equals("true", true) || it == "1"
-                    } == true
-                    // A snapshot is counted only after SQLite confirms the insert.
-                    db.insert(data, charging)
-                    CollectionDiagnostics.record(
-                        this@CollectorService,
-                        "Снимок MCP записан • SOC ${data.soc.toInt()}% • одометр ${"%.1f".format(data.odometer)} км",
-                        true
-                    )
-                    consecutiveFailures = 0
-                    nextDelayMs = CollectorRetryBackoff.delayAfterFailure(0)
-                    if (data.online) {
-                        estimator.add(RangeEstimator.Sample(data.odometer, data.soc, System.currentTimeMillis(), charging))
-                        val range = estimator.estimate(data.soc, data.stockRange)
-                        val rangeText = range?.let { " • запас ~${it.rangeKm.toInt()} км" }.orEmpty()
-                        updateNotification("MCP • SOC ${data.soc.toInt()}% • одометр ${"%.1f".format(data.odometer)} км$rangeText")
-                    } else {
-                        updateNotification("MCP: снимок записан • автомобиль офлайн")
+                        val rawSensors = result.optString("sensors_json", "{}")
+                        val sensorObject = JSONObject(rawSensors)
+                        val sensors = buildMap {
+                            val keys = sensorObject.keys()
+                            while (keys.hasNext()) {
+                                val key = keys.next()
+                                val value = sensorObject.opt(key)
+                                put(key, if (value is JSONObject || value is org.json.JSONArray) value.toString() else value?.toString().orEmpty())
+                            }
+                        }
+                        val snapshot = TelemetrySnapshot(
+                            soc = result.getDouble("soc"),
+                            odometer = result.getDouble("odometer"),
+                            stockRange = if (result.isNull("stock_range")) null else result.getDouble("stock_range"),
+                            online = result.optBoolean("online", false),
+                            ready = if (result.isNull("ready")) null else result.optBoolean("ready"),
+                            updatedAt = result.optString("updated_at").takeIf { it.isNotBlank() },
+                            sensors = sensors,
+                            rawSensorsJson = rawSensors
+                        )
+                        SnapshotDb.get(this@CollectorService).insert(snapshot)
+                        updateNotification("EVACONNECT: снимок обновлён • SOC ${snapshot.soc.toInt()}% • ${"%.1f".format(snapshot.odometer)} км")
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        updateNotification("EVACONNECT: ${e.message?.take(110) ?: e.javaClass.simpleName}")
                     }
-                } catch (e: AuthenticationRequiredException) {
-                    CollectionDiagnostics.record(this@CollectorService, "Авторизация MCP bridge: ключ не принят", false)
-                    updateNotification("Ключ MCP bridge не принят • проверьте настройки")
-                    stopSelf()
-                    return@launch
-                } catch (e: Exception) {
-                    consecutiveFailures = CollectorRetryBackoff.nextFailureCount(consecutiveFailures)
-                    nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
-                    val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(110) ?: "ошибка MCP bridge"
-                    CollectionDiagnostics.record(this@CollectorService, reason, false)
-                    updateNotification("MCP: нет свежих данных • повтор через ${nextDelayMs / 1000} с • $reason")
+                    delay(30_000)
                 }
-                delay(nextDelayMs)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateNotification("Не удалось запустить EVACONNECT: ${e.message?.take(110) ?: e.javaClass.simpleName}")
             }
         }
         return START_STICKY
     }
 
-    override fun onTimeout(startId: Int, fgsType: Int) {
-        // Android 15+ limits background dataSync foreground services to six hours per 24 hours.
-        pollJob?.cancel()
-        stopSelf(startId)
-    }
-
     private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(NotificationChannel(
-                    CHANNEL, "Сбор телеметрии", NotificationManager.IMPORTANCE_LOW
-                ))
-        }
+        if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(NotificationChannel(CHANNEL, "Сбор телеметрии", NotificationManager.IMPORTANCE_LOW))
     }
 
     @Suppress("DEPRECATION")
     private fun notification(text: String): Notification {
-        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
-            else Notification.Builder(this)
-        return builder.setContentTitle("Evolute Telemetry Pro")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setOngoing(true)
-            .build()
+        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else Notification.Builder(this)
+        return builder.setContentTitle("Evolute Telemetry Pro").setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_notify_sync).setOngoing(true).build()
     }
 
     private fun updateNotification(text: String) {
+        getSharedPreferences("collector_status", MODE_PRIVATE).edit()
+            .putString("last_status", text).putLong("updated_at", System.currentTimeMillis()).apply()
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
     }
 
