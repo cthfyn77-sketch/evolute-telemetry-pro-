@@ -117,7 +117,7 @@ private fun TelemetryProApp(
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
                     Column(Modifier.padding(16.dp)) {
                         Text("Авторизация Evolute", color = Cyan, fontSize = 18.sp)
-                        OutlinedTextField(phone, { phone = it.filter(Char::isDigit).take(15) }, label = { Text("Телефон с кодом страны") }, singleLine = true)
+                        OutlinedTextField(phone, { phone = it.filter(Char::isDigit).take(15) }, label = { Text("Телефон с кодом страны (только RU)") }, singleLine = true)
                         Button(enabled = !busy, onClick = {
                             busy = true
                             scope.launch {
