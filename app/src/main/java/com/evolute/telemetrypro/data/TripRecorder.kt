@@ -18,7 +18,7 @@ class TripRecorder {
             val baseline = history.firstOrNull { now - it.capturedAtMillis in 0..600_000L } ?: return
             val distance = telemetry.odometer - baseline.odometerKm
             if (distance >= 0.2 && distance <= 5.0) {
-                db.startTrip(baseline.capturedAtMillis, baseline.odometerKm, baseline.socPercent, lat, lon)
+                db.startTrip(baseline.capturedAtMillis, baseline.odometerKm, baseline.socPercent, null, null)
             }
             return
         }
@@ -34,7 +34,7 @@ class TripRecorder {
             return
         }
 
-        db.updateTrip(active.id, now, telemetry.odometer, telemetry.soc, lat, lon, lastMovement)
+        db.updateTrip(active.id, telemetry.odometer, telemetry.soc, lat, lon, lastMovement)
 
         if (!telemetry.ready && !charging && now - lastMovement >= STOP_TIMEOUT_MS) {
             db.finishTrip(active.id, now, "completed")
