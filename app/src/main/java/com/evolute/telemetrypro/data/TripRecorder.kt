@@ -16,21 +16,27 @@ class TripRecorder {
 
         if (active == null) {
             if (!telemetry.ready || charging || previous == null) return
-            val baseline = history.firstOrNull {
+            val gpsBaseline = history.firstOrNull {
+                it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS &&
+                    it.lat != null && it.lon != null
+            }
+            val odometerBaseline = previous.takeIf {
                 it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS
-            } ?: return
-            val odometerMoved = telemetry.odometer - baseline.odometerKm in ODOMETER_EPSILON_KM..MAX_SINGLE_JUMP_KM
-            val gpsMoved = confirmedGpsDisplacement(history, current, baseline.lat, baseline.lon)
-            if (odometerMoved || gpsMoved) {
-                db.startTrip(baseline.capturedAtMs, baseline.odometerKm, baseline.soc,
-                    baseline.lat, baseline.lon)
+            }
+            val odometerMoved = odometerBaseline != null &&
+                telemetry.odometer - odometerBaseline.odometerKm >= ODOMETER_EPSILON_KM
+            val gpsMoved = gpsBaseline != null &&
+                confirmedGpsDisplacement(history, current, gpsBaseline.lat, gpsBaseline.lon)
+            val start = if (odometerMoved) odometerBaseline else if (gpsMoved) gpsBaseline else null
+            if (start != null) {
+                db.startTrip(start.capturedAtMs, start.odometerKm, start.soc, start.lat, start.lon)
             }
             return
         }
 
         val previousOdometer = previous?.odometerKm ?: active.endOdometer
         val odometerDelta = telemetry.odometer - previousOdometer
-        val odometerMoved = odometerDelta in ODOMETER_EPSILON_KM..MAX_SINGLE_JUMP_KM
+        val odometerMoved = odometerDelta >= ODOMETER_EPSILON_KM
         var gpsReferenceLat = active.gpsReferenceLat ?: active.endLat
         var gpsReferenceLon = active.gpsReferenceLon ?: active.endLon
         if (gpsReferenceLat == null || gpsReferenceLon == null) {
@@ -142,7 +148,6 @@ class TripRecorder {
         private const val GPS_CONFIRMATION_WINDOW_MS = 2 * 60 * 1000L
         private const val GPS_MOVEMENT_METERS = 500.0
         private const val ODOMETER_EPSILON_KM = 0.001
-        private const val MAX_SINGLE_JUMP_KM = 5.0
         private const val READY_OFF_CLOSE_MS = 10 * 60 * 1000L
         private const val AFTER_CHARGE_RESUME_MS = 15 * 60 * 1000L
     }
