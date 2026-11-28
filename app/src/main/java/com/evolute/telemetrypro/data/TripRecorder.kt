@@ -16,18 +16,21 @@ class TripRecorder {
 
         if (active == null) {
             if (!telemetry.ready || charging || previous == null) return
-            // Find the last point before the latest eligible GPS displacement
-            // run. The point must be at least 500 m behind the preceding
-            // snapshot; this preserves the stationary anchor after movement
-            // crosses the threshold without re-anchoring to the displaced point.
+            // Keep the latest eligible position as the anchor when the
+            // current point first crosses 500 m. If two displaced snapshots
+            // are already present, step back to the last point before that run.
             val gpsHistory = history.filter {
                 it.ready && !it.charging && now - it.capturedAtMs in 0..START_LOOKBACK_MS &&
                     it.lat != null && it.lon != null
             }
             val previousGps = gpsHistory.lastOrNull()
-            val gpsBaseline = if (previousGps == null) null else {
-                gpsHistory.dropLast(1).lastOrNull {
-                    distanceMeters(it.lat!!, it.lon!!, previousGps.lat!!, previousGps.lon!!) >= GPS_MOVEMENT_METERS
+            val gpsBaseline = if (previousGps == null || lat == null || lon == null) null else {
+                if (distanceMeters(previousGps.lat!!, previousGps.lon!!, lat, lon) >= GPS_MOVEMENT_METERS) {
+                    previousGps
+                } else {
+                    gpsHistory.dropLast(1).lastOrNull {
+                        distanceMeters(it.lat!!, it.lon!!, previousGps.lat!!, previousGps.lon!!) >= GPS_MOVEMENT_METERS
+                    }
                 }
             }
             val odometerBaseline = previous.takeIf {
