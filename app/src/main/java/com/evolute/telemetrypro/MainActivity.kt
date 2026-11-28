@@ -50,7 +50,8 @@ private data class RefreshState(
     val estimate: RangeEstimator.Estimate?,
     val capturedAtMs: Long?,
     val telemetryGaps: TelemetryGapAnalyzer.Report,
-    val vehicleState: VehicleMovementState.State
+    val vehicleState: VehicleMovementState.State,
+    val diagnostics: String
 )
 
 class MainActivity : ComponentActivity() {
@@ -91,7 +92,8 @@ class MainActivity : ComponentActivity() {
                         nowMs
                     )
                     RefreshState(latest, db.count(), rangeEstimate, db.latestCapturedAtMs(), gapReport,
-                        VehicleMovementState.analyze(db.vehicleMovementSamples()))
+                        VehicleMovementState.analyze(db.vehicleMovementSamples()),
+                        CollectionDiagnostics.summary(this))
                 },
                 onTripHistory = {
                     TripHistoryAnalyzer.analyze(SnapshotDb.get(this).tripHistorySamples())
@@ -155,6 +157,7 @@ private fun TelemetryProApp(
     var capturedAtMs by remember { mutableStateOf<Long?>(null) }
     var telemetryGaps by remember { mutableStateOf(TelemetryGapAnalyzer.Report.empty()) }
     var vehicleState by remember { mutableStateOf(VehicleMovementState.State.UNKNOWN) }
+    var diagnostics by remember { mutableStateOf("Диагностика ещё не загружена") }
     var clockNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
     var batteryPeriodMs by rememberSaveable { mutableStateOf<Long?>(604_800_000L) }
@@ -181,6 +184,7 @@ private fun TelemetryProApp(
                 capturedAtMs = result.capturedAtMs
                 telemetryGaps = result.telemetryGaps
                 vehicleState = result.vehicleState
+                diagnostics = result.diagnostics
                 clockNowMs = System.currentTimeMillis()
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Локальная история обновлена"
             } catch (e: Exception) {
@@ -543,6 +547,12 @@ private fun TelemetryProApp(
             }
             Spacer(Modifier.height(12.dp))
             Text(status, color = Muted, fontSize = 12.sp)
+            Card(Modifier.fillMaxWidth().padding(top = 8.dp), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Диагностика сбора телеметрии", color = Cyan, fontSize = 13.sp)
+                    Text(diagnostics, color = Muted, fontSize = 11.sp)
+                }
+            }
             Text("Только чтение через API Evolute • сессия зашифрована Android Keystore • снимки хранятся локально", color = Muted, fontSize = 11.sp)
         }
     }
