@@ -14,7 +14,9 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** AES-GCM encrypted session; the AES key never leaves Android Keystore. */
 class KeystoreTokenStore(context: Context) : TokenStore {
-    private val prefs = context.applicationContext.getSharedPreferences("telemetry_pro_session", Context.MODE_PRIVATE)
+    private val prefs = context.applicationContext.getSharedPreferences("evolute_vehicle_session", Context.MODE_PRIVATE)
+    // Migrate sessions created by the newer Kotlin-only build into the build 273 namespace.
+    private val previousPrefs = context.applicationContext.getSharedPreferences("telemetry_pro_session", Context.MODE_PRIVATE)
     private val alias = "evolute_telemetry_pro_aes_key"
 
     private fun key(create: Boolean): SecretKey {
@@ -30,8 +32,20 @@ class KeystoreTokenStore(context: Context) : TokenStore {
     }
 
     @Synchronized override fun get(): ApiClient.Tokens? {
-        val iv = prefs.getString("iv", null)
-        val data = prefs.getString("data", null)
+        var iv = prefs.getString("iv", null)
+        var data = prefs.getString("data", null)
+        if (iv == null && data == null) {
+            // Both versions use the same Keystore alias, so the encrypted payload can be copied unchanged.
+            val oldIv = previousPrefs.getString("iv", null)
+            val oldData = previousPrefs.getString("data", null)
+            if (oldIv != null && oldData != null) {
+                if (!prefs.edit().putString("iv", oldIv).putString("data", oldData).commit()) {
+                    throw IOException("Не удалось перенести сохранённую сессию")
+                }
+                iv = oldIv
+                data = oldData
+            }
+        }
         if (iv == null && data == null) return null
         if (iv.isNullOrBlank() || data.isNullOrBlank()) throw IOException("Хранилище сессии повреждено")
         return try {
@@ -57,6 +71,7 @@ class KeystoreTokenStore(context: Context) : TokenStore {
 
     @Synchronized override fun clear() {
         prefs.edit().clear().commit()
+        previousPrefs.edit().clear().commit()
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         ks.deleteEntry(alias)
     }
