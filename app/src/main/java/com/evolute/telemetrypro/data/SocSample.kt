@@ -7,5 +7,6 @@ data class SocSample(
     val online: Boolean,
     val ready: Boolean,
     val charging: Boolean,
-    val batteryTemp: Double?
+    val batteryTemp: Double?,
+    val gapBefore: Boolean = false
 )
