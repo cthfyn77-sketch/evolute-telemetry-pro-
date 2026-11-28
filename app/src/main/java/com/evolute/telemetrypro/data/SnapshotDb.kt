@@ -66,7 +66,7 @@ class SnapshotDb private constructor(context: Context) :
         return writableDatabase.insertOrThrow("trips", null, values)
     }
 
-    @Synchronized fun updateTrip(id: Long, at: Long, odometer: Double, soc: Double, lat: Double?, lon: Double?, lastMovement: Long) {
+    @Synchronized fun updateTrip(id: Long, odometer: Double, soc: Double, lat: Double?, lon: Double?, lastMovement: Long) {
         val values = ContentValues().apply {
             put("end_odometer", odometer); put("end_soc", soc); put("last_movement_ms", lastMovement)
             if (lat == null) putNull("end_lat") else put("end_lat", lat)
