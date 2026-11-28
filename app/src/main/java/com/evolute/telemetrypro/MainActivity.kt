@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
         require(phone.length in 8..15) { "Введите телефон с кодом страны" }
         ensurePython()
         val raw = Python.getInstance().getModule("evaconnect_bridge")
-            .callAttr("request_otp", phone.trim(), "RU").toString()
+            .callAttr("request_otp", phone.trim().removePrefix("+"), "RU").toString()
         val result = JSONObject(raw)
         if (!result.optBoolean("ok", false)) throw IOException(result.optString("error", "Не удалось отправить SMS"))
     }
@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity() {
     private fun signIn(phone: String, code: String) {
         ensurePython()
         val raw = Python.getInstance().getModule("evaconnect_bridge")
-            .callAttr("sign_in", phone.trim(), code.trim()).toString()
+            .callAttr("sign_in", phone.trim().removePrefix("+"), code.trim()).toString()
         val result = JSONObject(raw)
         if (!result.optBoolean("ok", false)) throw IOException(result.optString("error", "Ошибка SMS-авторизации"))
         val access = result.optString("access_token")
@@ -309,8 +309,8 @@ private fun TelemetryProApp(
                             color = Muted, fontSize = 12.sp
                         )
                         OutlinedTextField(
-                            phone, { phone = it.filter { ch -> ch.isDigit() || ch == '+' }.take(16) },
-                            label = { Text("Телефон с кодом страны (только RU)") },
+                            phone, { phone = it.filter(Char::isDigit).take(15) },
+                            label = { Text("Телефон с кодом страны, без + (только RU)") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
