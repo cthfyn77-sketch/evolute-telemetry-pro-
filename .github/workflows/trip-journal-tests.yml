@@ -1,7 +1,7 @@
 name: Trip journal tests
 on:
   push:
-    branches: [ 'work/trip-journal-rules' ]
+    branches: [ 'work/**' ]
   workflow_dispatch:
 permissions:
   contents: read
