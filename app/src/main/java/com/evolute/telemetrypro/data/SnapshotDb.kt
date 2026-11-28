@@ -28,8 +28,9 @@ class SnapshotDb private constructor(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 2) createTripsTable(db)
-        if (oldVersion < 3) {
+        if (oldVersion < 2) {
+            createTripsTable(db)
+        } else if (oldVersion < 3) {
             db.execSQL("ALTER TABLE trips ADD COLUMN ready_off_since_ms INTEGER")
             db.execSQL("ALTER TABLE trips ADD COLUMN charging_unplugged_ms INTEGER")
             db.execSQL("ALTER TABLE trips ADD COLUMN gps_reference_lat REAL")
@@ -83,7 +84,7 @@ class SnapshotDb private constructor(context: Context) :
     }
 
     @Synchronized fun updateTrip(
-        id: Long, odometer: Double, soc: Double, lat: Double?, lon: Double, lastMovement: Long
+        id: Long, odometer: Double, soc: Double, lat: Double?, lon: Double?, lastMovement: Long
     ) {
         updateTripState(id, odometer, soc, lat, lon, lastMovement, "active", null, null, lat, lon)
     }
