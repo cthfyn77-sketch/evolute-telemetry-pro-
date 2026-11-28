@@ -96,4 +96,37 @@ class TripRecorderTest {
         assertEquals(100.3, db.activeTrip()?.startOdometer ?: -1.0, 0.001)
         assertEquals(gpsBaselineCapturedAt, db.activeTrip()?.startedAtMs ?: -1L)
     }
+    @Test fun gpsMovementRequiresConsecutiveReadyUnpluggedSnapshots() {
+        val context = RuntimeEnvironment.getApplication<Application>()
+        context.deleteDatabase("evolute_telemetry_pro.sqlite")
+        val db = SnapshotDb.get(context)
+        val recorder = TripRecorder()
+        var lat = 55.75
+        var now = System.currentTimeMillis()
+
+        fun telemetry(ready: Boolean) = ApiClient.Telemetry(
+            80.0, 100.0, null, true, ready, null,
+            mapOf("lat" to lat.toString(), "lon" to "37.61")
+        )
+        fun sample(ready: Boolean, charging: Boolean = false) {
+            val t = telemetry(ready)
+            recorder.record(db, t, charging, now)
+            db.insert(t, charging)
+            now += 30_000
+        }
+
+        sample(ready = true) // stationary baseline
+        lat = 55.755
+        sample(ready = true) // first displaced snapshot is insufficient
+        assertNull(db.activeTrip())
+        sample(ready = false) // READY OFF breaks the consecutive sequence
+        sample(ready = true) // must not combine with the old displaced point
+        assertNull(db.activeTrip())
+        sample(ready = true, charging = true) // plug insertion also breaks it
+        sample(ready = true) // immediately after unplug is not a two-snapshot run
+        assertNull(db.activeTrip())
+        sample(ready = true) // second consecutive eligible displaced point
+        assertNotNull(db.activeTrip())
+    }
+
 }
