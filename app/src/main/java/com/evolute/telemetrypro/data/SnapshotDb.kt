@@ -407,6 +407,25 @@ class SnapshotDb private constructor(context: Context) :
             result
         }
 
+    @Synchronized fun recentSocSamples(sinceMs: Long, limit: Int = 5000): List<SocSample> =
+        readableDatabase.rawQuery(
+            """SELECT captured_ms,soc,odometer,online,ready,charging,sensors_json
+               FROM (SELECT captured_ms,soc,odometer,online,ready,charging,sensors_json
+                     FROM samples WHERE captured_ms >= ? ORDER BY captured_ms DESC LIMIT ?)
+               ORDER BY captured_ms ASC""",
+            arrayOf(sinceMs.toString(), limit.toString())
+        ).use { c ->
+            val result = ArrayList<SocSample>()
+            while (c.moveToNext()) {
+                val sensors = org.json.JSONObject(c.getString(6))
+                val temp = listOf("batteryTemp", "batteryTemperature", "tractionBatteryTemp")
+                    .firstNotNullOfOrNull { key -> sensors.optString(key).toDoubleOrNull()?.takeIf { it.isFinite() } }
+                result.add(SocSample(c.getLong(0), c.getDouble(1), c.getDouble(2),
+                    c.getInt(3) == 1, c.getInt(4) == 1, c.getInt(5) == 1, temp))
+            }
+            result
+        }
+
     fun count(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM samples", null).use {
         it.moveToFirst(); it.getLong(0)
     }
