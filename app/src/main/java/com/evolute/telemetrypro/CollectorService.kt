@@ -74,7 +74,8 @@ class CollectorService : Service() {
                 } catch (e: Exception) {
                     consecutiveFailures = CollectorRetryBackoff.nextFailureCount(consecutiveFailures)
                     nextDelayMs = CollectorRetryBackoff.delayAfterFailure(consecutiveFailures)
-                    val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(110) ?: "ошибка API"
+                    val reason = e.message?.replace(Regex("[\\r
+\\t]+"), " ")?.take(110) ?: "ошибка API"
                     CollectionDiagnostics.record(this@CollectorService, reason, false)\n                    updateNotification("Сбор не выполнен • повтор через ${nextDelayMs / 1000} с • $reason")
                 }
                 delay(nextDelayMs)
