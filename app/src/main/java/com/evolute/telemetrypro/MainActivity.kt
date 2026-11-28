@@ -142,8 +142,6 @@ private fun TelemetryProApp(
 ) {
     val scope = rememberCoroutineScope()
     var phone by rememberSaveable { mutableStateOf("") }
-    // The verified Collector login form defaults to the account country RU.
-    var country by rememberSaveable { mutableStateOf("RU") }
     var smsCode by rememberSaveable { mutableStateOf("") }
     var session by remember { mutableStateOf(hasSession) }
     var busy by remember { mutableStateOf(false) }
@@ -278,23 +276,16 @@ private fun TelemetryProApp(
                         Text("Вход выполняется прямо на телефоне. Токены сохраняются в зашифрованном Android Keystore.", color = Muted, fontSize = 12.sp)
                         OutlinedTextField(
                             phone, { phone = it.filter(Char::isDigit).take(15) },
-                            label = { Text("Телефон с кодом страны, без +") },
+                            label = { Text("Телефон с кодом страны (только RU)") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        OutlinedTextField(
-                            country, { country = it.filter(Char::isLetter).take(2).uppercase() },
-                            label = { Text("Код страны аккаунта (2 буквы)") },
-                            placeholder = { Text("Например, RU или FR") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Button(enabled = !busy && phone.length in 8..15 && country.length == 2, onClick = {
+                        Button(enabled = !busy && phone.length in 8..15, onClick = {
                             busy = true
                             status = "Запрашиваем SMS-код…"
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) { onRequestOtp(phone, country) }
+                                    withContext(Dispatchers.IO) { onRequestOtp(phone, "RU") }
                                     status = "Запрос SMS принят. Введите полученный код."
                                 } catch (e: Exception) { status = e.message ?: "Не удалось запросить SMS" }
                                 finally { busy = false }
