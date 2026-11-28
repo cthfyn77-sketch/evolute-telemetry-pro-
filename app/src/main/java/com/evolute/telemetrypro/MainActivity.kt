@@ -21,6 +21,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.evolute.telemetrypro.data.ApiClient
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
+import org.json.JSONObject
+import java.io.IOException
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.RangeEstimator
@@ -38,6 +42,34 @@ private val Muted = Color(0xFF9FB0BA)
 
 class MainActivity : ComponentActivity() {
     private lateinit var tokenStore: KeystoreTokenStore
+
+    private fun ensurePython() {
+        if (!Python.isStarted()) Python.start(AndroidPlatform(applicationContext))
+    }
+
+    private fun requestSms(phone: String, country: String) {
+        require(phone.length in 8..15) { "Введите телефон с кодом страны" }
+        ensurePython()
+        val raw = Python.getInstance().getModule("evaconnect_android")
+            .callAttr("request_otp", phone.trim().removePrefix("+"), country.trim().uppercase()).toString()
+        val result = JSONObject(raw)
+        if (!result.optBoolean("ok", false)) throw IOException(result.optString("error", "Не удалось отправить SMS"))
+    }
+
+    private fun signIn(phone: String, code: String) {
+        ensurePython()
+        val raw = Python.getInstance().getModule("evaconnect_android")
+            .callAttr("sign_in", phone.trim().removePrefix("+"), code.trim()).toString()
+        val result = JSONObject(raw)
+        if (!result.optBoolean("ok", false)) throw IOException(result.optString("error", "Ошибка SMS-авторизации"))
+        val access = result.optString("access_token")
+        val refresh = result.optString("refresh_token")
+        if (access.isBlank() || refresh.isBlank()) throw IOException("EVACONNECT не вернул пару токенов")
+        tokenStore.save(ApiClient.Tokens(access, refresh,
+            result.optString("user_id").takeIf { it.isNotBlank() },
+            result.optString("user_token").takeIf { it.isNotBlank() },
+            result.optString("widget_id").takeIf { it.isNotBlank() }))
+    }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,9 +84,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             TelemetryProApp(
                 hasSession = existingSession,
-                onRequestCode = { phone, country -> ApiClient(tokenStore).requestOtp(phone, country) },
+                onRequestCode = { phone, country -> requestSms(phone, country) },
                 onLogin = { phone, code ->
-                    ApiClient(tokenStore).signIn(phone, code)
+                    signIn(phone, code)
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
                 onTrips = { SnapshotDb.get(this).recentTrips(30) },
@@ -68,6 +100,14 @@ class MainActivity : ComponentActivity() {
                     Triple(latest, db.count(), latest?.let { estimator.estimate(it.soc, it.stockRange) })
                 }
             )
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val hasSession = runCatching { tokenStore.get() != null }.getOrDefault(false)
+        if (hasSession) {
+            runCatching { ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java)) }
         }
     }
 }
