@@ -24,6 +24,7 @@ import com.evolute.telemetrypro.data.ApiClient
 import com.evolute.telemetrypro.data.KeystoreTokenStore
 import com.evolute.telemetrypro.data.SnapshotDb
 import com.evolute.telemetrypro.data.RangeEstimator
+import com.evolute.telemetrypro.data.TripRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,6 +55,7 @@ class MainActivity : ComponentActivity() {
                     ApiClient(tokenStore).signIn(phone, code)
                     ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java))
                 },
+                onTrips = { SnapshotDb.get(this).recentTrips(30) },
                 onRefresh = {
                     val db = SnapshotDb.get(this)
                     val latest = db.latest()
@@ -71,6 +73,7 @@ private fun TelemetryProApp(
     hasSession: Boolean,
     onRequestCode: suspend (String, String) -> Unit,
     onLogin: suspend (String, String) -> Unit,
+    onTrips: suspend () -> List<TripRecord>,
     onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
 ) {
     val scope = rememberCoroutineScope()
@@ -85,6 +88,7 @@ private fun TelemetryProApp(
     var snapshot by remember { mutableStateOf<ApiClient.Telemetry?>(null) }
     var count by remember { mutableLongStateOf(0L) }
     var estimate by remember { mutableStateOf<RangeEstimator.Estimate?>(null) }
+    var trips by remember { mutableStateOf<List<TripRecord>>(emptyList()) }
 
     fun refresh() {
         scope.launch {
@@ -93,6 +97,7 @@ private fun TelemetryProApp(
                 snapshot = result.first
                 count = result.second
                 estimate = result.third
+                trips = withContext(Dispatchers.IO) { onTrips() }
                 status = if (snapshot == null) "Ожидание первого снимка телеметрии" else "Данные обновлены локально"
             } catch (e: Exception) { status = e.message ?: "Ошибка чтения данных" }
         }
@@ -169,7 +174,23 @@ private fun TelemetryProApp(
                         MetricCard("Состояние", snapshot?.let { if (it.online) "Онлайн" else "Офлайн" } ?: "Нет данных", status)
                     }
                     "Батарея" -> MetricCard("Батарея", snapshot?.let { "SOC ${it.soc}%" } ?: "Нет данных", "Снимков сохранено: $count • графики в следующем этапе")
-                    "Поездки" -> MetricCard("История поездок", "Подключается", "Следующий этап — чтение поездок и маршрутов API")
+                    "Поездки" -> {
+                        MetricCard("Журнал поездок", "${trips.size}", "Локальная история по фактическим изменениям одометра")
+                        if (trips.isEmpty()) {
+                            MetricCard("Поездок пока нет", "Ожидание движения", "Запись начнётся после подтверждённого изменения одометра")
+                        } else {
+                            trips.forEach { trip ->
+                                val date = java.time.Instant.ofEpochMilli(trip.startedAtMs).toString().take(16).replace('T', ' ')
+                                val durationMin = trip.durationMs / 60_000
+                                val state = if (trip.endedAtMs == null) "Поездка продолжается" else if (trip.status == "interrupted") "Завершена с разрывом данных" else "Завершена"
+                                MetricCard(
+                                    date,
+                                    "${"%.1f".format(trip.distanceKm)} км",
+                                    "${"%.0f".format(trip.startSoc)}% → ${"%.0f".format(trip.endSoc)}% • расход SOC ${"%.1f".format(trip.socUsed)} п.п. • ${durationMin} мин • $state"
+                                )
+                            }
+                        }
+                    }
                     "Аналитика" -> MetricCard("Аналитика", "Подключается", "Расход SOC на 100 км после накопления километровой истории")
                     else -> MetricCard("Технические датчики",
                         snapshot?.sensors?.entries?.joinToString("\n") { "${it.key}: ${it.value}" } ?: "Нет данных",
