@@ -1,5 +1,6 @@
 package com.evolute.telemetrypro.data
 
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -8,6 +9,10 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class TripHistoryDbTest {
+    @After fun closeDatabase() {
+        SnapshotDb.get(RuntimeEnvironment.getApplication()).close()
+    }
+
     @Test fun storesAndFinishesTripWithoutChangingSampleHistory() {
         val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("evolute_telemetry_pro.sqlite")
