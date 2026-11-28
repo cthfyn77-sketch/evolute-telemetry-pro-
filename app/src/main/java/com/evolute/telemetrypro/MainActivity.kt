@@ -180,18 +180,28 @@ private fun TelemetryProApp(
                     }
                     "Батарея" -> {
                         MetricCard("Батарея", snapshot?.let { "SOC ${it.soc.toInt()}%" } ?: "Нет данных",
-                            "Снимков сохранено: $count • история подключений зарядного разъёма")
-                        MetricCard("Зарядные сессии", "${chargingSessions.size}", "Начало — подключение кабеля, окончание — отключение")
+                            "Снимков сохранено: $count • раздельная история подключения кабеля и передачи энергии")
+                        MetricCard("Зарядные сессии", "${chargingSessions.size}", "Кабель и передача энергии учитываются отдельно")
                         if (chargingSessions.isEmpty()) {
                             MetricCard("История пока пуста", "Ожидание подключения", "Сессия будет записана при первом обнаружении подключённого разъёма")
                         } else {
                             chargingSessions.forEach { charge ->
-                                val date = java.time.Instant.ofEpochMilli(charge.startedAtMs).toString().take(16).replace('T', ' ')
-                                val socStart = charge.startSoc?.let { "%.0f%%".format(it) } ?: "нет данных"
-                                val socEnd = charge.endSoc?.let { "%.0f%%".format(it) } ?: if (charge.endedAtMs == null) "идёт" else "нет данных"
-                                val gain = charge.socGain?.let { "${if (it >= 0) "+" else ""}${"%.1f".format(it)} п.п." } ?: "прирост не рассчитан"
-                                val duration = charge.durationMs?.let { "${it / 3_600_000} ч ${(it / 60_000) % 60} мин" } ?: "ещё подключён"
-                                MetricCard(date, "$socStart → $socEnd", "$gain • $duration")
+                                fun time(ms: Long?): String = ms?.let {
+                                    java.time.Instant.ofEpochMilli(it).toString().take(16).replace('T', ' ')
+                                } ?: "—"
+                                fun temp(value: Double?): String = value?.let { "${"%.1f".format(it)} °C" } ?: "—"
+                                fun duration(ms: Long): String = "${ms / 3_600_000} ч ${(ms / 60_000) % 60} мин"
+                                val cableDuration = charge.durationMs?.let(::duration) ?: "кабель подключён"
+                                val transferDuration = duration(charge.energyDurationMs)
+                                val before = charge.socBeforeEnergy?.let { "${"%.0f".format(it)}%" } ?: "—"
+                                val after = charge.socAfterEnergy?.let { "${"%.0f".format(it)}%" } ?: if (charge.cableRemovedAtMs == null) "ожидание" else "—"
+                                val gain = charge.socGain?.let { "${if (it >= 0) "+" else ""}${"%.1f".format(it)} п.п." } ?: "—"
+                                val sensorInfo = if (charge.hasEnergyStateSensor) "Индикатор передачи энергии найден" else "Отдельный индикатор передачи энергии пока не распознан"
+                                MetricCard(
+                                    time(charge.cableInsertedAtMs),
+                                    "Кабель: $cableDuration • Передача энергии: $transferDuration",
+                                    "Подключение: ${time(charge.cableInsertedAtMs)} • Первая передача: ${time(charge.energyStartedAtMs)} • Последняя остановка: ${time(charge.energyStoppedAtMs)} • Отключение: ${time(charge.cableRemovedAtMs)}\nSOC: $before → $after ($gain) • Температура: ${temp(charge.batteryTempBefore)} → ${temp(charge.batteryTempAfter)}\n$sensorInfo"
+                                )
                             }
                         }
                     }
