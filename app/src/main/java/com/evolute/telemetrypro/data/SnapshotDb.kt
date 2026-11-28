@@ -226,7 +226,8 @@ class SnapshotDb private constructor(context: Context) :
             if (!exists) db.execSQL("ALTER TABLE charging_sessions ADD COLUMN $definition")
         }
         // Keep legacy timestamps intact while marking old sessions as lacking energy-state telemetry.
-        db.execSQL("UPDATE charging_sessions SET cable_removed_at_ms=ended_at_ms, cable_inserted_soc=start_soc, soc_after_energy=end_soc WHERE cable_removed_at_ms IS NULL AND ended_at_ms IS NOT NULL")
+        db.execSQL("UPDATE charging_sessions SET cable_inserted_soc=start_soc WHERE cable_inserted_soc IS NULL")
+        db.execSQL("UPDATE charging_sessions SET cable_removed_at_ms=ended_at_ms, soc_after_energy=end_soc WHERE cable_removed_at_ms IS NULL AND ended_at_ms IS NOT NULL")
         db.execSQL("UPDATE charging_sessions SET has_energy_state_sensor=0")
         createChargingIntervalsTable(db)
     }
