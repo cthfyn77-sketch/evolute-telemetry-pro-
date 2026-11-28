@@ -63,6 +63,15 @@ class CollectorService : Service() {
             stopGpsUpdates()
             demoteForegroundFromLocation()
         }
+        // The service can be recreated after process death with a null intent.
+        // Re-establish the opted-in location FGS type immediately while the app
+        // launches the service from a visible activity, before the first poll.
+        if (intent?.action != "DISABLE_GPS" &&
+            getSharedPreferences(GPS_PREFS, MODE_PRIVATE).getBoolean(GPS_ENABLED, false) &&
+            hasLocationPermission()
+        ) {
+            promoteForegroundForLocation()
+        }
         if (pollJob?.isActive == true) {
             syncGpsTracking(SnapshotDb.get(this))
             return START_STICKY
