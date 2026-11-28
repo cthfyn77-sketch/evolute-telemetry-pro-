@@ -55,7 +55,7 @@ class ChargingSessionTest {
         assertNull(session.socGain)
     }
 
-    @Test fun openSessionRemainsPersistedAndClosesOnNextUnplugSnapshot() {
+    @Test fun openSessionCanBeContinuedByNextCollectorSnapshot() {
         val db = SnapshotDb.get(RuntimeEnvironment.getApplication())
         db.writableDatabase.delete("charging_sessions", null, null)
         db.writableDatabase.delete("samples", null, null)
@@ -63,7 +63,7 @@ class ChargingSessionTest {
         db.insert(telemetry(62.0), charging = true)
         val sessionId = db.recentChargingSessions().single().id
 
-        // Re-access through the database singleton, as the service does after recreation.
+        // Re-access through the same persistent database helper, as the collector does.
         val restored = SnapshotDb.get(RuntimeEnvironment.getApplication())
         assertEquals(sessionId, restored.recentChargingSessions().single().id)
         assertNull(restored.recentChargingSessions().single().endedAtMs)
