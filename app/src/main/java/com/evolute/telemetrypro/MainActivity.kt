@@ -91,6 +91,10 @@ class MainActivity : ComponentActivity() {
             gpsPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
         }
     }
+
+    private fun disableGpsRoutes() {
+        ContextCompat.startForegroundService(this, Intent(this, CollectorService::class.java).setAction("DISABLE_GPS"))
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         tokenStore = KeystoreTokenStore(this)
@@ -114,6 +118,7 @@ class MainActivity : ComponentActivity() {
                 onTripRoute = { trip -> SnapshotDb.get(this).tripRoutePoints(trip.id) },
                 onActiveTripRoute = { val db = SnapshotDb.get(this); db.activeTrip()?.let { db.tripRoutePoints(it.id) } ?: emptyList() },
                 onEnableGps = { enableGpsRoutes() },
+                onDisableGps = { disableGpsRoutes() },
                 onChargingSessions = { SnapshotDb.get(this).recentChargingSessions(30) },
                 onSocHistory = { sinceMs -> SnapshotDb.get(this).recentSocSamples(sinceMs) },
                 onRefresh = {
@@ -146,6 +151,7 @@ private fun TelemetryProApp(
     onTripRoute: suspend (TripRecord) -> List<TripRoutePoint>,
     onActiveTripRoute: suspend () -> List<TripRoutePoint>,
     onEnableGps: () -> Unit,
+    onDisableGps: () -> Unit,
     onChargingSessions: suspend () -> List<ChargingSession>,
     onSocHistory: suspend (Long) -> List<SocSample>,
     onRefresh: suspend () -> Triple<ApiClient.Telemetry?, Long, RangeEstimator.Estimate?>
@@ -382,7 +388,8 @@ private fun TelemetryProApp(
                             }
                         } else {
                             Button(onClick = onEnableGps, modifier = Modifier.fillMaxWidth()) { Text("Включить запись GPS-маршрутов") }
-                            Text("GPS-точки сохраняются каждые 5 секунд при смещении от 5 м и только во время активной поездки. Для точного маршрута разрешите точную геопозицию.", color = Muted, fontSize = 11.sp)
+                            TextButton(onClick = onDisableGps, modifier = Modifier.fillMaxWidth()) { Text("Выключить запись GPS-маршрутов") }
+                            Text("GPS-точки сохраняются каждые 5 секунд при смещении от 5 м и только во время активной поездки. При включённой функции Android сохраняет режим GPS-службы для надёжной записи в фоне.", color = Muted, fontSize = 11.sp)
                             if (activeTripRoute.isNotEmpty()) {
                                 Text("Текущий маршрут", color = Cyan, fontSize = 17.sp)
                                 TripRouteMap(activeTripRoute, live = true)
