@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
     private fun requestSms(phone: String) {
         require(phone.length in 8..15) { "Введите телефон с кодом страны" }
         ensurePython()
-        val raw = Python.getInstance().getModule("evaconnect_bridge")
+        val raw = Python.getInstance().getModule("evaconnect_android")
             .callAttr("request_otp", phone.trim().removePrefix("+"), "RU").toString()
         val result = JSONObject(raw)
         if (!result.optBoolean("ok", false)) throw IOException(result.optString("error", "Не удалось отправить SMS"))
@@ -77,7 +77,7 @@ class MainActivity : ComponentActivity() {
 
     private fun signIn(phone: String, code: String) {
         ensurePython()
-        val raw = Python.getInstance().getModule("evaconnect_bridge")
+        val raw = Python.getInstance().getModule("evaconnect_android")
             .callAttr("sign_in", phone.trim().removePrefix("+"), code.trim()).toString()
         val result = JSONObject(raw)
         if (!result.optBoolean("ok", false)) throw IOException(result.optString("error", "Ошибка SMS-авторизации"))
