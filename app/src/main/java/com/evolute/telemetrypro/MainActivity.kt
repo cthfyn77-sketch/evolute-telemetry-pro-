@@ -448,7 +448,9 @@ private fun TripRouteMap(points: List<TripRoutePoint>, live: Boolean) {
             points.forEach { point -> put(org.json.JSONArray().put(point.latitude).put(point.longitude)) }
         }.toString()
     }
-    val html = remember(pointsJson, live) {
+    val endLabel = if (live) "Текущее положение" else "Окончание"
+    val cameraCommand = if (live) "map.setView(pts[pts.length-1],16);" else "map.fitBounds(line.getBounds().pad(0.15));"
+    val html = remember(pointsJson, endLabel, cameraCommand) {
         """
         <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0">
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -463,8 +465,8 @@ private fun TripRouteMap(points: List<TripRoutePoint>, live: Boolean) {
         if(pts.length){
           const line=L.polyline(pts,{color:'#28d7d0',weight:5,opacity:0.9}).addTo(map);
           L.circleMarker(pts[0],{radius:7,color:'#fff',fillColor:'#16a34a',fillOpacity:1}).addTo(map).bindPopup('Начало');
-          L.circleMarker(pts[pts.length-1],{radius:7,color:'#fff',fillColor:'#ef4444',fillOpacity:1}).addTo(map).bindPopup('${if (live) "Текущее положение" else "Окончание"}');
-          ${if (live) "map.setView(pts[pts.length-1],16);" else "map.fitBounds(line.getBounds().pad(0.15));"}
+          L.circleMarker(pts[pts.length-1],{radius:7,color:'#fff',fillColor:'#ef4444',fillOpacity:1}).addTo(map).bindPopup('$endLabel');
+          $cameraCommand
         }
         </script></body></html>
         """.trimIndent()
