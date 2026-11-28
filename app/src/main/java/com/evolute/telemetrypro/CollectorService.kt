@@ -58,7 +58,8 @@ class CollectorService : Service() {
                         }
 
                         val rawSensors = result.optString("sensors_json", "{}")
-                        val sensorObject = JSONObject(rawSensors)
+                        val fullResponse = JSONObject(rawSensors)
+                        val sensorObject = fullResponse.optJSONObject("sensors") ?: fullResponse
                         val sensors = buildMap {
                             val keys = sensorObject.keys()
                             while (keys.hasNext()) {
