@@ -175,14 +175,21 @@ private fun TelemetryProApp(
                     }
                     "Батарея" -> MetricCard("Батарея", snapshot?.let { "SOC ${it.soc}%" } ?: "Нет данных", "Снимков сохранено: $count • графики в следующем этапе")
                     "Поездки" -> {
-                        MetricCard("Журнал поездок", "${trips.size}", "Локальная история по фактическим изменениям одометра")
+                        MetricCard("Журнал поездок", "${trips.size}", "Начало по READY и движению; GPS-подтверждение — 500 м")
                         if (trips.isEmpty()) {
-                            MetricCard("Поездок пока нет", "Ожидание движения", "Запись начнётся после подтверждённого изменения одометра")
+                            MetricCard("Поездок пока нет", "Ожидание движения", "Запись начнётся при READY ON и подтверждённом движении по одометру или GPS")
                         } else {
                             trips.forEach { trip ->
                                 val date = java.time.Instant.ofEpochMilli(trip.startedAtMs).toString().take(16).replace('T', ' ')
                                 val durationMin = trip.durationMs / 60_000
-                                val state = if (trip.endedAtMs == null) "Поездка продолжается" else if (trip.status == "interrupted") "Завершена с разрывом данных" else "Завершена"
+                                val state = when {
+                                    trip.endedAtMs != null && trip.status == "interrupted" -> "Завершена с разрывом данных"
+                                    trip.endedAtMs != null -> "Завершена"
+                                    trip.status == "charging" -> "Ожидание во время подключённой зарядки"
+                                    trip.status == "waiting_after_charge" -> "Окно возобновления после зарядки"
+                                    trip.status == "waiting_ready_off" -> "Ожидание завершения (READY OFF)"
+                                    else -> "Поездка продолжается"
+                                }
                                 MetricCard(
                                     date,
                                     "${"%.1f".format(trip.distanceKm)} км",
